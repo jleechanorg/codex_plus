@@ -32,6 +32,46 @@ pip install -r requirements.txt
 OPENAI_BASE_URL=http://localhost:3000 codex
 ```
 
+## Environment Setup
+
+To use Codex-Plus seamlessly, add this to your `~/.bashrc` or `~/.zshrc`:
+
+```bash
+# Codex-Plus proxy configuration
+export OPENAI_BASE_URL=http://localhost:3000
+
+# Optional: Create alias for convenience
+alias codex-plus='OPENAI_BASE_URL=http://localhost:3000 codex'
+```
+
+After adding to your shell config:
+```bash
+source ~/.bashrc  # or ~/.zshrc
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_BASE_URL` | `https://api.openai.com` | Routes Codex CLI through the proxy when set to `http://localhost:3000` |
+
+### Usage Patterns
+
+```bash
+# Persistent (recommended): Set in shell config
+export OPENAI_BASE_URL=http://localhost:3000
+codex  # Always uses proxy
+
+# One-time usage
+OPENAI_BASE_URL=http://localhost:3000 codex
+
+# Using alias (if configured)
+codex-plus
+
+# Direct Codex CLI (bypass proxy)
+OPENAI_BASE_URL=https://api.openai.com codex
+```
+
 ## Architecture
 
 Codex-Plus works by intercepting Codex CLI requests through an HTTP proxy:
