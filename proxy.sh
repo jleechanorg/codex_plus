@@ -6,8 +6,10 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PATH="$SCRIPT_DIR/venv"
 START_SCRIPT="$SCRIPT_DIR/start.py"
-PID_FILE="$SCRIPT_DIR/proxy.pid"
-LOG_FILE="$SCRIPT_DIR/proxy.log"
+# Runtime files under /tmp/codex_plus
+RUNTIME_DIR="/tmp/codex_plus"
+PID_FILE="$RUNTIME_DIR/proxy.pid"
+LOG_FILE="$RUNTIME_DIR/proxy.log"
 
 # Colors for output
 RED='\033[0;31m'
@@ -25,6 +27,7 @@ print_status() {
             echo -e "  ${GREEN}✅ Running${NC} (PID: $PID)"
             echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:3000"
             echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:3000/health"
+            echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
             echo -e "  ${GREEN}📊 Usage:${NC} OPENAI_BASE_URL=http://localhost:3000 codex"
             return 0
         else
@@ -47,6 +50,9 @@ start_proxy() {
         return 0
     fi
     
+    # Ensure runtime directory exists
+    mkdir -p "$RUNTIME_DIR"
+
     # Activate virtual environment and start proxy
     cd "$SCRIPT_DIR"
     if [ ! -d "$VENV_PATH" ]; then
