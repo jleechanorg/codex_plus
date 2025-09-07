@@ -67,3 +67,6 @@ Thumbs.db
 # Project specific
 proxy.log
 proxy.pid
+
+# Claude Code configurations (contains secrets and user-specific settings)
+.claude/
