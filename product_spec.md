@@ -1,131 +1,367 @@
-# Codex-Plus — User Story Product Specification (v1.1)
+# Codex-Plus — Product Specification (v2.0)
 
 - Product: Codex-Plus
-- Version: 1.1
-- Status: Proposed
+- Version: 2.0
+- Status: Proposed  
 - Date: September 7, 2025
+- Authors: Development Team
 
 ## Executive Summary
 
-Codex-Plus provides an “IDE in the terminal” experience that is indistinguishable from Codex CLI, adding power-user workflows without changing how users interact.
+Codex-Plus is an HTTP proxy that enhances Codex CLI with power-user features while maintaining identical UI/UX. It operates transparently through environment variable configuration and supports both individual developer workflows and optional enterprise governance.
 
-- Identical look and feel to Codex CLI; zero learning curve.
-- Slash commands compatible with Claude Code CLI conventions.
-- Optional pre-input and post-output hooks to enrich prompts and act on responses.
-- Remote MCP tool support to use external tools within the session.
-- Persistent sessions to resume work exactly where you left off.
-- Optional predictable-cost mode for budgeting, when available.
+**Core Features:**
+- HTTP proxy integration preserving streaming responses and interactive prompts
+- Extensible slash commands with metadata, arguments, and shell/file integration
+- Lifecycle hooks for workflow automation at key interaction points
+- Remote MCP server support with HTTP/SSE transports and OAuth authentication
+- Configuration compatibility system (.claude directories with .codex fallback)
+- Optional enterprise features: allowlists, auditing, security policies
+
+**Target Users:**
+- **Developers**: Individual workflows with hooks, custom commands, remote MCP tools
+- **Teams**: Optional governance, shared configurations, observability
+- **Enterprises**: Security policies, audit trails, cost management
 
 ## Vision
 
-Codex-Plus delivers an “IDE in the terminal” experience that looks and feels exactly like Codex CLI, while adding power‑user features such as slash commands, workflow hooks, remote MCP tools, and persistent sessions. It introduces these capabilities with zero learning curve and optional support for predictable costs, without changing how users naturally work in the terminal.
+Codex-Plus is a control plane for AI-assisted development that enhances Codex CLI through an HTTP proxy architecture. It maintains identical terminal experience while adding extensibility through slash commands, hooks, and MCP integrations. The system supports individual developer productivity and scales to enterprise governance without changing core workflows.
 
 ## Product Principles
 
-- UI Parity: Looks and behaves exactly like Codex CLI.
-- Non‑Invasive: Feels the same as Codex CLI; no new concepts to learn.
-- Extensible by Design: Simple, discoverable ways to add commands, integrate tools, and automate workflows.
-- Predictable Costs Option: An optional mode that aligns with fixed‑cost usage plans where available.
-- Fast and Reliable: Interactions feel instantaneous and resilient during long sessions.
+- **Transparent Integration**: HTTP proxy preserves exact Codex CLI experience via `OPENAI_BASE_URL` environment variable
+- **Configuration Compatibility**: Check `.claude/` directories first, fallback to `.codex/` for backward compatibility  
+- **Extensible by Design**: Simple, discoverable ways to add commands, integrate tools, and automate workflows
+- **Security by Default**: Shell execution requires explicit permissions; sensitive data redacted automatically
+- **Enterprise Ready**: Optional governance features don't impact individual developer experience
 
-## User Stories (with Acceptance Criteria)
+## Core User Stories & Requirements
 
-1) Identical Terminal Experience [MUST]
+### 1) HTTP Proxy Integration [MUST]
 
-- As a terminal‑first developer, I want the product to look and behave exactly like Codex CLI so I can switch with zero learning curve.
-- Acceptance:
-  - Starting and using the product is indistinguishable from Codex CLI in prompts, streaming, colors, keyboard behavior, and interaction flow.
-  - All non‑slash input behaves exactly as in Codex CLI.
-  - Interactive question/answer flows remain smooth (e.g., confirmations).
+**User Story:** As a Codex CLI user, I want to enable enhanced features without changing my workflow, so I can add capabilities incrementally.
 
-2) Slash Commands [MUST]
+**Implementation:** HTTP proxy intercepts Codex CLI requests via `OPENAI_BASE_URL=http://localhost:3000`
 
-- As a power user, I want slash commands prefixed with “/” that follow Claude Code CLI conventions so I can trigger actions quickly.
-- Acceptance:
-  - Slash commands are recognized and execute immediately without altering non‑slash behavior.
-  - I can list available commands and see brief descriptions via `/help`.
-  - Command names and argument patterns align with Claude Code CLI conventions.
+**Acceptance Criteria:**
+- Starting and using the product is indistinguishable from Codex CLI in prompts, streaming, colors, keyboard behavior, and interaction flow
+- All non-slash input behaves exactly as in Codex CLI with ≤50ms added latency (p95)
+- Interactive question/answer flows remain smooth (e.g., confirmations)
+- Real-time streaming responses preserved with ≤0.01% mid-response errors per 10k requests
 
-3) Hooks: Pre‑Input and Post‑Output [MUST]
+### 2) Enhanced Slash Commands [MUST]
 
-- As a user, I want to optionally modify prompts before sending and act on responses after receiving so I can automate parts of my workflow.
-- Acceptance:
-  - I can choose to have prompts enriched or adjusted before sending.
-  - I can choose to observe or act on responses after they appear.
-  - I can easily turn these behaviors on or off.
+**User Story:** As a power user, I want sophisticated slash commands with arguments, file references, and shell integration so I can automate complex workflows.
 
-4) Remote MCP Tools [MUST]
+**Implementation:** 
+- Markdown files in `.claude/commands/` (checked first) or `.codex/commands/` (fallback)
+- YAML frontmatter: `allowed-tools`, `argument-hint`, `description`, `model`
+- Subdirectories create namespaced commands (e.g., `.claude/commands/frontend/component.md` → `/component` with "(project:frontend)" description)
+- Argument placeholders: `$ARGUMENTS` (all args), `$1 $2` (positional)
+- Shell inclusion: `!`git status`` (requires `allowed-tools` permissions)
+- File references: `@src/utils/helpers.js`
+- Advanced commands via JS/Python exports: `module.exports = (args) => { /* logic */ return prompt; }`
 
-- As a user of MCP tools, I want to connect to remote MCP tools consistent with Claude Code CLI so I can use external tools inside the conversation.
-- Acceptance:
-  - Remote MCP tools can be listed and invoked from within the session.
-  - Tool results appear inline and are part of the conversation history.
-  - Behavior matches user expectations from Claude Code CLI.
+**Acceptance Criteria:**
+- Slash commands execute immediately without altering non-slash behavior
+- `/help` lists available commands with scopes, descriptions, and argument hints
+- Dry-run preview shows resolved prompt/commands before execution
+- Shell inclusion disabled by default; requires explicit allowlist per command
+- Commands support cross-platform environments (Windows/WSL via cmd /c)
 
-5) Persistent Sessions [MUST]
+### 3) Lifecycle Hooks [MUST]
 
-- As a user, I want my session to persist across terminal restarts so I never lose context.
-- Acceptance:
-  - Closing and reopening resumes the same conversation with complete history intact.
-  - I can optionally save or export a transcript of the session (e.g., via `/save`).
+**User Story:** As a developer, I want to automate workflow steps at key interaction points so I can integrate with my development environment.
 
-6) Seamless Passthrough [MUST]
+**Implementation:**
+- Events: `PreToolUse`, `PostToolUse`, `Notification`, `UserPromptSubmit`, `Stop`, `SubagentStop`, `PreCompact`, `SessionStart`, `SessionEnd`
+- Configured via `/hooks` slash command with matchers (ToolPattern like `Task`, `Bash`, `*` for all)
+- Stored in `~/.claude/settings.json` (checked first) or `~/.codex/settings.json` (fallback)
+- Project-level: `.claude/settings.json` or `.codex/settings.json`
 
-- As a user, I want anything that is not a slash command to be treated as normal Codex CLI input so I can work as usual.
-- Acceptance:
-  - All non‑slash messages pass through unchanged.
-  - There is no noticeable latency added to typical interactions.
+**Acceptance Criteria:**
+- Hooks execute at specified lifecycle points with JSON input
+- Security prompts for shell execution in project scope: "Allow? (Y)es/(N)o/(A)lways"
+- Home directory (`~/`) trusted by default; project directory (`./`) requires approval
+- Restricted environment: timeouts (configurable per hook), output caps (64KB), no network by default
+- Declared permissions required (e.g., `run:prettier`, `read_repo`, `read_env:GITHUB_TOKEN`)
 
-7) Interactive Prompts [MUST]
+### 4) Remote MCP Integration [MUST]
 
-- As a user, I want interactive prompts and confirmations to work naturally so I can respond without friction.
-- Acceptance:
-  - When asked to confirm actions (e.g., run code, apply changes), simple inputs like “y/n” work as expected.
-  - Complex interactive flows remain responsive and intuitive.
+**User Story:** As a user of external tools, I want to connect to remote MCP servers with authentication so I can use services like GitHub, Linear, or Airtable within my session.
 
-8) Discoverability and Defaults [SHOULD]
+**Implementation:**
+- Transport support: stdio, HTTP, SSE
+- Command: `codex-plus mcp add <name> <command>` (stdio), `--transport sse <name> <url>` (SSE)
+- OAuth 2.0 authentication managed via `/mcp` command
+- Scopes: local (project-specific, default), project (shared via `.mcp.json`), user (across projects)
+- Environment variables: `--env AIRTABLE_API_KEY=YOUR_KEY`
+- Resource references: `@<server>:<resource>` (e.g., `@github:issue://123`)
+- Exposed slash commands: `/mcp__github__list_prs`
 
-- As a new user, I want built‑in help, status, and quit commands, and clear guidance on capabilities so I can onboard quickly.
-- Acceptance:
-  - `/help` lists built‑in and user‑defined slash commands with short descriptions.
-  - `/status` shows connection status and current session information.
-  - `/quit` exits gracefully without losing information.
+**Acceptance Criteria:**
+- MCP servers connect via HTTP/SSE with OAuth authentication
+- `@<server>:<resource>` mentions work in prompts
+- MCP prompts exposed as discoverable slash commands with argument hints
+- `/mcp list` shows servers, resources, and available prompts
+- Per-server circuit breaker (3 failures, 60s cooldown) with graceful degradation
+- Output limits configurable via `MAX_MCP_OUTPUT_TOKENS` (default 25,000)
+- PII guardrail: prompt text not sent to MCP unless explicitly enabled
 
-9) Predictable Costs Option [MUST]
+### 5) Configuration Compatibility [MUST]
 
-- As a heavy user or team, I want an option to use predictable, fixed‑cost usage so budgeting is easier.
-- Acceptance:
-  - I can choose to operate in a mode that supports predictable, fixed‑cost usage, when available.
-  - Choosing this option does not change how I interact.
+**User Story:** As a Claude Code CLI user, I want my existing configurations to work while having the option to use new features.
 
-10) Raw Attach Mode [SHOULD]
+**Implementation:** Check `.claude/` directories first, fallback to identical `.codex/` directories with same formats
 
-- As a power user, I want an optional mode that shows the raw underlying session for complex interactions so I can troubleshoot or handle advanced cases.
-- Acceptance:
-  - A command is available to switch into and out of a direct, raw session view.
-  - In this view, only direct interactions are shown until I exit.
+**Acceptance Criteria:**
+- Configuration precedence: enterprise > cmd args > local project > shared project > user
+- `/plus status` or `/config list` shows unified view merging all sources
+- Environment variable expansion: `${VAR:-default}`
+- Guided onboarding via `codex-plus init`
 
-11) Performance and Reliability [SHOULD]
+### 6) Security & Permissions [MUST]
 
-- As a user, I want interactions to feel instantaneous and robust so I can stay in flow.
-- Acceptance:
-  - Typical interactions feel as fast as Codex CLI.
-  - The product remains responsive during long outputs or extended sessions.
+**User Story:** As a security-conscious user or enterprise admin, I want explicit control over shell execution, data access, and external connections.
 
-## Default Commands
+**Implementation:**
+- Shell execution requires explicit permissions and user approval
+- Default redaction patterns for API keys, JWTs, AWS credentials
+- Configurable sensitive file blocking: `permissions.deny` (e.g., `Read(./.env)`)
+- Optional signed command/hook packs for enterprise (e.g., minisign)
 
-- `/help`: Show all available slash commands (built‑in and user‑defined) with short descriptions.
-- `/status`: Show current connection status and session information.
-- `/quit`: Gracefully end the session.
-- `/attach`: Enter a raw, direct session view (optional raw mode).
-- `/save`: Export the current transcript to a file.
+**Acceptance Criteria:**
+- First shell execution in project prompts for approval
+- Sensitive data automatically redacted in logs and outputs  
+- Command provenance displayed before first run
+- Enterprise mode can require signed artifacts (`requireSigned: true`)
 
-## Non‑Goals (v1.0)
+### 7) Enterprise Features [SHOULD]
 
-- No graphical user interface; terminal‑only experience.
-- No multi‑user or multi‑session management.
-- No built‑in advanced AI features beyond what users can create with slash commands, hooks, or MCP tools.
+**User Story:** As an enterprise admin, I want governance controls for model access, endpoints, and audit trails.
 
-## Compatibility Note
+**Implementation:**
+- Model allowlists with runtime enforcement
+- Endpoint allowlists blocking unauthorized URLs
+- Structured audit logs with redaction, exportable to SIEM
+- Prometheus/JSON metrics export
 
-Slash commands, remote MCP tools, and hooks follow Claude Code CLI conventions.
+**Acceptance Criteria:**
+- Blocked models show clear error: "This workspace allows: ${models}"
+- Unauthorized endpoints return 403 with guidance
+- Metrics track request count, status codes, latency histograms
+- 99.9% monthly uptime excluding ≤30min planned maintenance
+
+### 8) Performance & Reliability [SHOULD]
+
+**User Story:** As a daily user, I want the proxy to be fast and reliable so it doesn't interfere with my flow.
+
+**Acceptance Criteria:**
+- Latency overhead ≤50ms p95, ≤85ms p99 across 10k requests
+- Stream integrity: ≤0.01% mid-response errors with automatic retry
+- Responsive during long outputs and extended sessions
+- Accessibility: coherent sentence chunks for screen readers, alt text for rich outputs
+
+## Built-in Commands
+
+| Command | Description | Usage |
+|---------|-------------|--------|
+| `/help` | List all slash commands with scopes, descriptions, and argument hints | `/help [pattern]` |
+| `/status` | Show proxy status, active MCP servers, and configuration sources | `/status` |
+| `/hooks` | Configure lifecycle hooks interactively | `/hooks` |
+| `/mcp` | Manage MCP server connections and authentication | `/mcp add/list/auth` |
+| `/plus` | Unified configuration view and system management | `/plus status/init` |
+| `/save` | Export current session transcript | `/save [filename]` |
+
+## Technical Architecture
+
+### High-Level Design
+```
+Codex CLI → HTTP Proxy (localhost:3000) → OpenAI API
+    ↓
+Config Manager (.claude → .codex fallback)
+    ↓
+Slash Command Engine (MD/JS/Python)
+    ↓  
+Hook System (Lifecycle Events)
+    ↓
+MCP Client (HTTP/SSE + OAuth)
+    ↓
+Metrics & Security (Prometheus + Audit)
+```
+
+### Implementation Stack
+- **Language**: Node.js with optional Python support
+- **Proxy**: Express.js or Fastify with streaming support
+- **Config**: YAML/JSON parsing with environment variable expansion
+- **Security**: Sandboxed shell execution, permission-based access
+- **MCP**: HTTP/SSE clients with OAuth 2.0 flow
+- **Metrics**: Prometheus client with histogram/gauge support
+
+### Configuration Precedence
+1. **Enterprise** (read-only admin policies)
+2. **Command Arguments** (runtime overrides)
+3. **Local Project** (`.claude/settings.json` or `.codex/settings.json`)
+4. **Shared Project** (`.mcp.json`, team configurations)
+5. **User Global** (`~/.claude/settings.json` or `~/.codex/settings.json`)
+
+## Configuration Examples
+
+### Slash Command (Markdown)
+```markdown
+---
+allowed-tools: Bash(git add:*), Bash(git status:*), Bash(git commit:*)
+argument-hint: [message]
+description: Create a git commit with staging
+model: claude-3-5-haiku-20241022
+---
+
+Stage all changes and create commit with message: $ARGUMENTS
+
+Current status:
+!`git status --porcelain`
+
+Review changes:
+!`git diff --cached`
+```
+
+### Advanced Slash Command (JavaScript)
+```javascript
+module.exports = (args) => {
+  const branch = args[0] || 'main';
+  return `Analyze the diff for branch ${branch}: !`git diff ${branch}...HEAD``;
+};
+```
+
+### Hook Configuration
+```json
+{
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "Write",
+      "command": "echo 'Writing to: $file' >> .codex-plus.log",
+      "timeout": 5,
+      "permissions": ["run:echo"]
+    }],
+    "PostToolUse": [{
+      "matcher": "*",
+      "command": "notify-send 'Tool completed: $tool'",
+      "permissions": ["run:notify-send"]
+    }]
+  }
+}
+```
+
+### MCP Configuration
+```json
+{
+  "mcpServers": {
+    "github": {
+      "transport": "sse",
+      "url": "https://mcp.github.com/sse",
+      "auth": {
+        "type": "oauth2",
+        "scopes": ["repo:read", "issues:read"]
+      }
+    },
+    "airtable": {
+      "command": "npx -y airtable-mcp-server",
+      "env": {"AIRTABLE_API_KEY": "${AIRTABLE_API_KEY}"}
+    }
+  }
+}
+```
+
+## Use Cases & Examples
+
+### Developer Workflow Automation
+```bash
+# Setup custom git workflow
+echo "---\nallowed-tools: Bash(git:*)\n---\n!`git status`\n!`git add -A`\n!`git commit -m '$ARGUMENTS'`" > ~/.claude/commands/commit.md
+
+# Use in session
+/commit "feat: add user authentication"
+```
+
+### Team MCP Integration  
+```bash
+# Admin adds shared MCP server
+codex-plus mcp add --scope project --transport sse linear https://mcp.linear.app
+
+# Developers use in conversation
+"Review issue @linear:issue://ENG-123 and create implementation plan"
+```
+
+### Enterprise Security
+```json
+{
+  "security": {
+    "modelAllowlist": ["claude-3-5-sonnet", "claude-3-5-haiku"],
+    "endpointAllowlist": ["api.anthropic.com", "api.openai.com"],
+    "requireSigned": true,
+    "permissions": {
+      "deny": ["Read(./.env)", "Read(secrets/**)", "Bash(rm:*)"]
+    }
+  }
+}
+```
+
+## Success Metrics & SLOs
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| **Latency Overhead** | ≤50ms p95, ≤85ms p99 | Rolling 10k requests |
+| **Stream Integrity** | ≤0.01% mid-response errors | Rolling 10k requests |
+| **Uptime** | 99.9% monthly | Excluding ≤30min planned maintenance |
+| **Hook Execution** | ≤5s timeout default | Per-hook configurable |
+| **MCP Response** | Circuit breaker at 3 failures | 60s cooldown per server |
+
+## Implementation Roadmap
+
+### Phase 1: Core Proxy (Q4 2025)
+- ✅ HTTP proxy with streaming support
+- ✅ Basic slash commands (Markdown)
+- ✅ Configuration system (.claude/.codex)
+- [ ] Hook system (PreToolUse, PostToolUse)
+- [ ] Security permissions and prompts
+
+### Phase 2: MCP & Advanced Features (Q1 2026)  
+- [ ] Remote MCP (HTTP/SSE transport)
+- [ ] OAuth 2.0 authentication flow
+- [ ] Advanced slash commands (JS/Python)
+- [ ] Circuit breaker and PII protection
+- [ ] Unified configuration view
+
+### Phase 3: Enterprise & Polish (Q2 2026)
+- [ ] Model/endpoint allowlists
+- [ ] Signed command packs
+- [ ] Prometheus metrics export
+- [ ] Audit logging and SIEM integration
+- [ ] Performance optimization
+
+## Risk Mitigation
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| **Upstream API Changes** | High | Version compatibility checks, graceful degradation |
+| **Security Vulnerabilities** | High | Sandboxed execution, permission prompts, code signing |
+| **Performance Degradation** | Medium | Async operations, connection pooling, metrics monitoring |
+| **MCP Server Failures** | Medium | Circuit breakers, graceful fallbacks, retry logic |
+| **Configuration Complexity** | Low | Guided onboarding, unified status view, validation |
+
+## Compatibility & Migration
+
+- **Codex CLI Compatibility**: v0.29+ required, auto-detected via `/version`
+- **Claude Code CLI**: Slash commands follow established conventions
+- **Configuration Migration**: Automatic `.codex` → `.claude` detection and migration prompts
+- **Rollback**: Simple environment variable unset restores original Codex CLI behavior
+
+## Competitive Positioning
+
+| Capability | Codex-Plus | GitHub Copilot | Cursor | Claude Code |
+|------------|------------|----------------|--------|-------------|
+| **Proxy Governance** | ✅ Full | ❌ None | ❌ None | ❌ None |
+| **Remote MCP** | ✅ HTTP/SSE/OAuth | ❌ None | ❌ None | ⚠️ Limited |
+| **Enterprise Security** | ✅ Allowlists/Audit | ⚠️ Limited | ❌ None | ❌ None |
+| **CLI Experience** | ✅ Identical | ⚠️ Different | ⚠️ Different | ✅ Identical |
+| **Extensibility** | ✅ Hooks/Commands | ⚠️ Extensions | ⚠️ Limited | ⚠️ Limited |

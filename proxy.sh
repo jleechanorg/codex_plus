@@ -53,6 +53,26 @@ start_proxy() {
     # Ensure runtime directory exists
     mkdir -p "$RUNTIME_DIR"
 
+    # Load API key from user's shell config so the proxy always sees it
+    # (does not echo the key; only ensures it's in the environment)
+    if [ -z "$OPENAI_API_KEY" ]; then
+        for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+            if [ -f "$rc" ]; then
+                # Try to source (may early-return in non-interactive shells)
+                # shellcheck disable=SC1090
+                . "$rc" >/dev/null 2>&1 || true
+                # If still not set, parse explicit export lines
+                if [ -z "$OPENAI_API_KEY" ]; then
+                    KEY_LINE=$(grep -E '^(export\s+OPENAI_API_KEY=|OPENAI_API_KEY=)' "$rc" | tail -n1 || true)
+                    if [ -n "$KEY_LINE" ]; then
+                        eval "$KEY_LINE" >/dev/null 2>&1 || true
+                    fi
+                fi
+            fi
+            [ -n "$OPENAI_API_KEY" ] && break
+        done
+    fi
+
     # Activate virtual environment and start proxy
     cd "$SCRIPT_DIR"
     if [ ! -d "$VENV_PATH" ]; then

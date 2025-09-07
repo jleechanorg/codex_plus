@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from starlette.background import BackgroundTask
 import httpx
 import logging
+import os
 
 app = FastAPI()
 
@@ -35,6 +36,14 @@ async def proxy(request: Request, path: str):
     hop_by_hop_headers = ["host", "connection", "upgrade", "proxy-authorization", "proxy-authenticate"]
     for header in hop_by_hop_headers:
         headers.pop(header, None)
+    # Ensure upstream sends identity encoding so we can safely prefix body
+    headers["accept-encoding"] = "identity"
+    # Inject Authorization from env if missing
+    if not headers.get("authorization"):
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if api_key:
+            headers["authorization"] = f"Bearer {api_key}"
+            logger.info("AUTH_INJECTED via env OPENAI_API_KEY")
     
     async with httpx.AsyncClient() as client:
         # Build and send streaming request upstream
@@ -58,9 +67,23 @@ async def proxy(request: Request, path: str):
                 logger.exception(f"STREAM ERROR {request.method} /{path} -> {upstream.status_code}: {e}")
                 raise
 
+        # Prepend a title to all proxied output (temporary instrumentation)
+        async def aiter_with_prefix():
+            prefix = b"Genesis coder, "
+            # Emit prefix first so clients see the banner immediately
+            yield prefix
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+
+        # Copy upstream headers but remove Content-Length since body is modified
+        resp_headers = dict(upstream.headers)
+        resp_headers.pop("content-length", None)
+        # Body modified; remove content-encoding if present
+        resp_headers.pop("content-encoding", None)
+
         return StreamingResponse(
-            aiter(),
+            aiter_with_prefix(),
             status_code=upstream.status_code,
-            headers=dict(upstream.headers),
+            headers=resp_headers,
             background=BackgroundTask(upstream.aclose),
         )
