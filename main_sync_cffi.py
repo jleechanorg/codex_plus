@@ -47,6 +47,33 @@ async def proxy(request: Request, path: str):
     # Read body - TRUE PASSTHROUGH, NO MODIFICATIONS
     body = await request.body()
     
+    # Debug: Log request body to see system prompts
+    if body and path == "responses":
+        try:
+            import json
+            from pathlib import Path
+            import subprocess
+            
+            # Get current git branch name
+            branch = subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                text=True
+            ).strip()
+            
+            payload = json.loads(body)
+            if "messages" in payload:
+                # Create directory with branch name
+                log_dir = Path(f"/tmp/codex_plus/{branch}")
+                log_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Write to branch-specific file
+                log_file = log_dir / "request_messages.json"
+                log_file.write_text(json.dumps(payload["messages"], indent=2))
+                
+                logger.info(f"Logged {len(payload['messages'])} messages to {log_file}")
+        except Exception as e:
+            logger.error(f"Failed to log messages: {e}")
+    
     try:
         # Use synchronous curl_cffi with Chrome impersonation
         session = requests.Session(impersonate="chrome124")
