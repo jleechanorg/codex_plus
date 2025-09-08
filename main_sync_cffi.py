@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """
 Codex Plus Proxy using curl_cffi synchronous client for better SSE handling
+Now with integrated slash command middleware for .claude/ infrastructure
 """
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from curl_cffi import requests
 import logging
+from slash_command_middleware import create_slash_command_middleware
 
 app = FastAPI()
 
 # Configuration
 UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Codex
+
+# Initialize slash command middleware
+slash_middleware = create_slash_command_middleware(upstream_url=UPSTREAM_URL)
 
 # Logger setup
 logger = logging.getLogger("codex_plus_proxy")
@@ -25,30 +30,15 @@ async def health():
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(request: Request, path: str):
-    """Proxy using curl_cffi sync client for better SSE handling"""
-    norm_path = path.lstrip("/")
-    target_url = f"{UPSTREAM_URL}/{norm_path}"
-    
-    # Forward query parameters
-    query_params = str(request.url.query)
-    if query_params:
-        target_url += f"?{query_params}"
-    
-    # Get headers from request
-    headers = {}
-    for key, value in request.headers.items():
-        # Skip host header as curl_cffi will set it
-        if key.lower() != "host":
-            headers[key] = value
-    
+    """Proxy with integrated slash command middleware support"""
     # Log incoming request
-    logger.info(f"Proxying {request.method} /{path} -> {target_url}")
+    logger.info(f"Processing {request.method} /{path}")
     
-    # Read body - TRUE PASSTHROUGH, NO MODIFICATIONS
+    # Read body for debug logging (preserve original behavior)
     body = await request.body()
-    
-    # Debug: Log request body to see system prompts
     logger.debug(f"Path: {path}, Body length: {len(body) if body else 0}")
+    
+    # Debug: Log request body to see system prompts (preserve original behavior)
     if body and path == "responses":
         logger.info(f"Capturing request to /responses endpoint")
         try:
@@ -83,48 +73,6 @@ async def proxy(request: Request, path: str):
         except Exception as e:
             logger.error(f"Failed to log messages: {e}")
     
-    try:
-        # Use synchronous curl_cffi with Chrome impersonation
-        session = requests.Session(impersonate="chrome124")
-        
-        # Make the request with streaming
-        response = session.request(
-            request.method,
-            target_url,
-            headers=headers,
-            data=body if body else None,
-            stream=True,
-            timeout=30
-        )
-        
-        logger.info(f"{request.method} /{path} -> {response.status_code}")
-        
-        # Stream the response back
-        def stream_response():
-            try:
-                # Stream raw content without buffering
-                for chunk in response.iter_content(chunk_size=None):
-                    if chunk:
-                        yield chunk
-            finally:
-                response.close()
-                session.close()
-        
-        # Get response headers
-        resp_headers = dict(response.headers)
-        resp_headers.pop("content-length", None)  # Remove as we're streaming
-        resp_headers.pop("content-encoding", None)  # Remove encoding headers
-        
-        return StreamingResponse(
-            stream_response(),
-            status_code=response.status_code,
-            headers=resp_headers,
-            media_type=resp_headers.get("content-type", "text/event-stream")
-        )
-        
-    except Exception as e:
-        logger.exception(f"Error proxying request: {e}")
-        return JSONResponse(
-            {"error": str(e)},
-            status_code=500
-        )
+    # Process request through slash command middleware
+    # This will either handle slash commands or proxy normally
+    return await slash_middleware.process_request(request, path)
