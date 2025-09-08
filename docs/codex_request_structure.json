@@ -8,7 +8,7 @@
       "content": [
         {
           "type": "input_text",
-          "text": "<environment_context>\n  <cwd>/Users/jleechan/projects_other/codex_plus</cwd>\n  <approval_policy>never</approval_policy>\n  <sandbox_mode>read-only</sandbox_mode>\n  <network_access>restricted</network_access>\n  <shell>bash</shell>\n</environment_context>"
+          "text": "<environment_context>\n  <cwd>/path/to/workspace</cwd>\n  <approval_policy>never</approval_policy>\n  <sandbox_mode>read-only</sandbox_mode>\n  <network_access>restricted</network_access>\n  <shell>bash</shell>\n</environment_context>"
         }
       ]
     },
@@ -85,5 +85,5 @@
   "include": [
     "reasoning.encrypted_content"
   ],
-  "prompt_cache_key": "de0f23a1-6c65-4daa-887d-b1a6ee93e685"
+  "prompt_cache_key": "example-prompt-cache-key"
 }

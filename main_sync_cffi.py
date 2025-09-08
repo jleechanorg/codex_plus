@@ -48,7 +48,9 @@ async def proxy(request: Request, path: str):
     body = await request.body()
     
     # Debug: Log request body to see system prompts
+    logger.debug(f"Path: {path}, Body length: {len(body) if body else 0}")
     if body and path == "responses":
+        logger.info(f"Capturing request to /responses endpoint")
         try:
             import json
             from pathlib import Path
@@ -61,16 +63,23 @@ async def proxy(request: Request, path: str):
             ).strip()
             
             payload = json.loads(body)
-            if "messages" in payload:
-                # Create directory with branch name
-                log_dir = Path(f"/tmp/codex_plus/{branch}")
-                log_dir.mkdir(parents=True, exist_ok=True)
-                
-                # Write to branch-specific file
-                log_file = log_dir / "request_messages.json"
-                log_file.write_text(json.dumps(payload["messages"], indent=2))
-                
-                logger.info(f"Logged {len(payload['messages'])} messages to {log_file}")
+            logger.info(f"Parsed payload with keys: {list(payload.keys())}")
+            
+            # Create directory with branch name
+            log_dir = Path(f"/tmp/codex_plus/{branch}")
+            log_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Write the full payload to see structure
+            log_file = log_dir / "request_payload.json"
+            log_file.write_text(json.dumps(payload, indent=2))
+            
+            logger.info(f"Logged full payload to {log_file}")
+            
+            # Also log just the instructions if available
+            if "instructions" in payload:
+                instructions_file = log_dir / "instructions.txt"
+                instructions_file.write_text(payload["instructions"])
+                logger.info(f"Logged instructions to {instructions_file}")
         except Exception as e:
             logger.error(f"Failed to log messages: {e}")
     
