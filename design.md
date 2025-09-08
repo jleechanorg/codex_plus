@@ -1,158 +1,127 @@
-# Codex-Plus Design Document: Hybrid Architecture
+# Codex-Plus Design Document: Simple Proxy Architecture
 
-**Version:** 2.0  
-**Date:** September 7, 2025  
-**Architecture:** Node.js Middleware + Python LiteLLM Proxy
+**Version:** 3.0  
+**Date:** January 2025  
+**Architecture:** Python curl_cffi Proxy with Integrated Middleware
 
 ## Executive Summary
 
-Codex-Plus uses a hybrid architecture combining Node.js middleware for Codex-specific features (slash commands, hooks, MCP) with Python LiteLLM for robust multi-provider LLM routing. This approach provides the best of both worlds: JavaScript ecosystem flexibility and enterprise-grade LLM proxy capabilities.
+Codex-Plus uses a simple Python proxy with curl_cffi to bypass Cloudflare and connect directly to ChatGPT's backend. All features (slash commands, hooks, MCP) are integrated directly into the Python proxy, avoiding unnecessary complexity and inter-service communication overhead.
+
+## Key Discoveries
+
+1. **Codex uses ChatGPT OAuth2 JWT tokens** (not OpenAI API keys)
+2. **Backend URL is `https://chatgpt.com/backend-api/codex`** (not api.openai.com)
+3. **Cloudflare blocks standard HTTP clients** - requires TLS fingerprinting bypass
+4. **LiteLLM is incompatible** with ChatGPT JWT authentication
 
 ## Architecture Overview
 
 ```
-┌─────────────┐    ┌──────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│  Codex CLI  │───▶│  Node.js Proxy   │───▶│  LiteLLM Proxy  │───▶│  LLM Providers  │
-│  (Client)   │    │  (Port 3000)     │    │  (Port 4000)    │    │ (OpenAI/Azure/  │
-└─────────────┘    └──────────────────┘    └─────────────────┘    │  Anthropic)     │
-                            │                                      └─────────────────┘
-                            ▼
+┌─────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Codex CLI  │───▶│  Python Proxy    │───▶│  ChatGPT Backend│
+│  (Client)   │    │  (Port 3000)     │    │  (Cloudflare)   │
+└─────────────┘    │  curl_cffi       │    └─────────────────┘
+                   └──────────────────┘
+                            │
                    ┌──────────────────┐
-                   │  Codex Features  │
-                   │ • Slash Commands │
-                   │ • Hooks System   │
-                   │ • MCP Integration│
-                   │ • Config (.claude│
-                   │   /.codex compat)│
+                   │ Integrated Features│
+                   │ • Slash Commands  │
+                   │ • Hooks System    │
+                   │ • MCP Integration │
+                   │ • Session Mgmt    │
                    └──────────────────┘
 ```
 
-## Component Responsibilities
+## Core Implementation
 
-### Node.js Middleware (Port 3000)
-**Purpose:** Handle Codex-Plus specific functionality while preserving streaming
+### Simple Passthrough Proxy (main_sync_cffi.py)
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
+from curl_cffi import requests
 
-**Responsibilities:**
-- Parse and execute slash commands from `.claude/commands/` or `.codex/commands/`
-- Execute lifecycle hooks (PreToolUse, PostToolUse, UserPromptSubmit, etc.)
-- Handle MCP server integration (HTTP/SSE + OAuth)
-- Configuration management with `.claude` → `.codex` fallback
-- Security: permission prompts, shell execution controls
-- Request preprocessing and response postprocessing
+app = FastAPI()
+UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"
 
-**Technology Stack:**
-- **Framework:** Express.js or Fastify
-- **Config:** YAML/JSON parsing with environment variable expansion
-- **Streaming:** Native Node.js streams with pipeline support
-- **Security:** Sandboxed shell execution, regex-based redaction
-
-### Python LiteLLM Proxy (Port 4000)
-**Purpose:** Enterprise-grade LLM routing and provider abstraction
-
-**Responsibilities:**
-- Multi-provider routing (OpenAI, Anthropic, Azure, ChatGPT subscriptions)
-- Load balancing, failover, and circuit breaking
-- Cost tracking and usage monitoring
-- Streaming response handling
-- Rate limiting and caching
-- Model aliasing and request transformation
-
-**Technology Stack:**
-- **Core:** LiteLLM library with proxy server
-- **Installation:** `pip install 'litellm[proxy]'`
-- **Configuration:** Environment variables and config files
-- **Monitoring:** Built-in Prometheus metrics
-
-## Request Flow
-
-### 1. Normal LLM Request
-```
-Codex CLI → Node.js (3000) → LiteLLM (4000) → Provider API → Response Stream
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def proxy(request: Request, path: str):
+    # Use curl_cffi with Chrome impersonation to bypass Cloudflare
+    session = requests.Session(impersonate="chrome124")
+    
+    response = session.request(
+        request.method,
+        f"{UPSTREAM_URL}/{path}",
+        headers=dict(request.headers),
+        data=await request.body(),
+        stream=True
+    )
+    
+    # Stream response back
+    def stream_response():
+        for chunk in response.iter_content(chunk_size=None):
+            if chunk:
+                yield chunk
+    
+    return StreamingResponse(stream_response())
 ```
 
-### 2. Slash Command Request  
-```
-Codex CLI → Node.js (3000) → Process Command → Generate Prompt → LiteLLM (4000) → Provider → Response
-```
+## Feature Implementation Strategy
 
-### 3. Hook-Enabled Request
-```
-Codex CLI → Node.js (3000) → PreHook → LiteLLM (4000) → PostHook → Response
-```
+### Phase 1: Working Proxy ✅ (Complete)
+- Simple passthrough proxy with curl_cffi
+- Cloudflare bypass working
+- SSE streaming functional
 
-## Installation & Setup
+### Phase 2: Slash Commands (Next)
+```python
+async def proxy(request: Request, path: str):
+    body = await request.body()
+    
+    # Detect slash commands
+    if is_slash_command(body):
+        return handle_slash_command(body)
+    
+    # Otherwise passthrough
+    return forward_to_chatgpt(body)
 
-### Prerequisites
-```bash
-# Node.js environment
-node --version  # v18+
-npm --version
-
-# Python environment for LiteLLM
-python --version  # 3.8+
-pip --version
-```
-
-### Step 1: Install LiteLLM
-```bash
-# Install LiteLLM with proxy support
-pip install 'litellm[proxy]'
-
-# Verify installation
-litellm --help
+def handle_slash_command(body):
+    command = extract_command(body)
+    if command == "/save":
+        return save_conversation()
+    elif command == "/status":
+        return get_status()
+    # etc...
 ```
 
-### Step 2: Configure LiteLLM
-```bash
-# Create LiteLLM configuration
-mkdir -p config
-cat > config/litellm_config.yaml << EOF
-model_list:
-  - model_name: gpt-4
-    litellm_params:
-      model: openai/gpt-4
-      api_key: os.environ/OPENAI_API_KEY
-  
-  - model_name: claude-3-5-sonnet
-    litellm_params:
-      model: anthropic/claude-3-5-sonnet-20241022
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-  - model_name: gpt-5
-    litellm_params:
-      model: openai/gpt-5
-      api_key: os.environ/OPENAI_API_KEY
-
-router_settings:
-  routing_strategy: usage-based-routing
-  model_group_alias: {"gpt5-high": "gpt-5", "gpt-high": "gpt-5"}
-
-general_settings:
-  cost_tracking: true
-  stream: true
-  max_budget: 100
-  budget_duration: 30d
-EOF
+### Phase 3: Hooks System
+```python
+# Pre-input and post-output hooks
+async def proxy(request: Request, path: str):
+    body = await request.body()
+    
+    # Pre-hooks
+    body = await run_pre_hooks(body)
+    
+    # Forward request
+    response = await forward_to_chatgpt(body)
+    
+    # Post-hooks on stream
+    async def hooked_stream():
+        async for chunk in response:
+            chunk = await run_post_hooks(chunk)
+            yield chunk
+    
+    return StreamingResponse(hooked_stream())
 ```
 
-### Step 3: Start LiteLLM Proxy
-```bash
-# Start LiteLLM proxy on port 4000
-litellm --config config/litellm_config.yaml --port 4000 --host 0.0.0.0
-
-# Or with environment variables
-OPENAI_API_KEY=your_key ANTHROPIC_API_KEY=your_key \
-litellm --config config/litellm_config.yaml --port 4000
-```
-
-### Step 4: Install Node.js Dependencies
-```bash
-# Install core dependencies
-npm init -y
-npm install express fastify axios dotenv js-yaml marked
-
-# Development dependencies
-npm install --save-dev nodemon typescript @types/node
+### Phase 4: MCP Integration
+```python
+# Remote MCP tool execution
+async def handle_mcp_request(tool_name, params):
+    mcp_server = get_mcp_server(tool_name)
+    result = await mcp_server.execute(tool_name, params)
+    return format_mcp_response(result)
 ```
 
 ## Configuration System
@@ -160,173 +129,107 @@ npm install --save-dev nodemon typescript @types/node
 ### Directory Structure
 ```
 codex_plus/
-├── config/
-│   ├── litellm_config.yaml     # LiteLLM proxy configuration
-│   └── codex_plus.json         # Node.js middleware config
-├── .claude/                    # Primary config directory (checked first)
-│   ├── commands/               # Slash commands (Markdown/JS/Python)
-│   │   ├── git.md             # /git command
-│   │   └── frontend/          # Namespaced commands
-│   │       └── component.md   # /component command
-│   ├── settings.json          # Hooks and user settings
-│   └── .mcp.json             # MCP server configurations
-├── .codex/                    # Fallback config directory
-│   └── [same structure as .claude]
-└── src/
-    ├── middleware.js          # Node.js proxy server
-    ├── slash_commands.js      # Slash command processor
-    ├── hooks.js              # Hook execution engine
-    └── mcp_client.js         # MCP integration
+├── main_sync_cffi.py          # Core proxy implementation
+├── requirements.txt           # Python dependencies
+├── .claude/                   # Configuration directory
+│   ├── commands/             # Slash command definitions
+│   │   ├── save.py          # /save command
+│   │   └── status.py        # /status command  
+│   ├── hooks/               # Hook definitions
+│   │   ├── pre_input.py    # Pre-input hooks
+│   │   └── post_output.py  # Post-output hooks
+│   └── settings.json        # User settings
+└── sessions/                # Session storage
+    └── {session_id}.json
 ```
 
-### Configuration Precedence
-1. **Enterprise policies** (read-only, admin-defined)
-2. **Command line arguments** (runtime overrides)
-3. **Local project** (`.claude/settings.json` or `.codex/settings.json`)
-4. **Shared project** (`.mcp.json`, team configurations)
-5. **User global** (`~/.claude/settings.json` or `~/.codex/settings.json`)
+## Why This Architecture
+
+### Advantages over Complex Approaches
+1. **Single Process** - No inter-service communication overhead
+2. **Direct Control** - Full access to request/response pipeline
+3. **Simple Debugging** - Everything in one Python process
+4. **Proven Solution** - curl_cffi reliably bypasses Cloudflare
+5. **Fast Development** - Add features directly without coordination
+
+### What We DON'T Need
+- **LiteLLM** - Incompatible with ChatGPT JWT auth
+- **Node.js middleware** - Python can handle everything
+- **Multiple services** - Unnecessary complexity
+- **API key routing** - We're using ChatGPT subscription auth
 
 ## Performance Characteristics
 
-### Latency Budget
-| Component | Target Latency | Notes |
-|-----------|----------------|-------|
-| **Node.js Processing** | ≤10ms p95 | Slash commands, hooks |
-| **Inter-service Call** | ≤5ms p95 | localhost HTTP |  
-| **LiteLLM Processing** | ≤35ms p95 | Provider routing |
-| **Total Overhead** | ≤50ms p95 | Codex-Plus added latency |
-
-### Streaming Performance
-- **Passthrough Mode:** Zero buffering for normal requests
-- **Processed Mode:** Minimal buffering for slash command responses
-- **Hook Mode:** Stream after hook completion (configurable)
+| Component | Latency | Notes |
+|-----------|---------|-------|
+| **Proxy overhead** | <5ms | Minimal processing |
+| **Slash commands** | <10ms | Local processing |
+| **Hooks** | <5ms per hook | Async execution |
+| **Total overhead** | <20ms | Negligible impact |
 
 ## Security Model
 
-### Shell Execution
-```javascript
-// Permission-based shell execution
-const executeShell = async (command, context) => {
-  // 1. Check if shell execution is allowed for this command
-  if (!hasPermission(command, context.allowedTools)) {
-    throw new Error('Shell execution not permitted');
-  }
-  
-  // 2. Prompt user for project-scope execution
-  if (context.scope === 'project' && !context.trustedProject) {
-    const approved = await promptUser('Allow shell execution? (Y/N/A)');
-    if (!approved) return null;
-  }
-  
-  // 3. Execute with restrictions
-  return await sandboxedExec(command, {
-    timeout: 30000,
-    outputLimit: 64 * 1024,
-    networkAccess: false
-  });
-};
-```
+### Authentication
+- Uses existing Codex CLI authentication (~/.codex/auth.json)
+- JWT tokens automatically refreshed by Codex
+- No API keys needed
 
-### Data Redaction
-```javascript
-// Built-in redaction patterns
-const REDACTION_PATTERNS = [
-  /sk-[a-zA-Z0-9]{20,50}/g,           // OpenAI API keys
-  /pk\.[a-zA-Z0-9]{20,50}/g,          // Anthropic API keys  
-  /AKIA[0-9A-Z]{16}/g,                // AWS access keys
-  /eyJ[a-zA-Z0-9+/=]+\.[a-zA-Z0-9+/=]+\.[a-zA-Z0-9+/=_-]+/g // JWTs
-];
+### Command Execution
+```python
+ALLOWED_COMMANDS = ['/save', '/status', '/help']
+
+def validate_command(command):
+    if command not in ALLOWED_COMMANDS:
+        raise ValueError(f"Unknown command: {command}")
 ```
 
 ## Development Workflow
 
-### 1. Development Mode
+### Running the Proxy
 ```bash
-# Terminal 1: Start LiteLLM with auto-reload
-litellm --config config/litellm_config.yaml --port 4000 --reload
+# Install dependencies
+pip install fastapi uvicorn curl_cffi
 
-# Terminal 2: Start Node.js middleware with nodemon  
-npm run dev  # nodemon src/middleware.js
+# Run proxy
+python -c "from main_sync_cffi import app; import uvicorn; uvicorn.run(app, host='127.0.0.1', port=3000)"
 
-# Terminal 3: Test with Codex CLI
+# Use with Codex
 export OPENAI_BASE_URL=http://localhost:3000
 codex "Hello world"
 ```
 
-### 2. Production Mode
-```bash
-# Use process managers
-pm2 start ecosystem.config.js
+### Adding Features
+1. Edit `main_sync_cffi.py` directly
+2. Test with Codex CLI
+3. No service coordination needed
 
-# Or systemd services
-systemctl start codex-plus-litellm
-systemctl start codex-plus-middleware
-```
+## Migration from Original Design
 
-### 3. Testing
-```bash
-# Health checks
-curl http://localhost:3000/health    # Node.js middleware
-curl http://localhost:4000/health    # LiteLLM proxy
+### What Changed
+- **Removed LiteLLM** - Incompatible with ChatGPT auth
+- **Removed Node.js** - Python handles everything
+- **Simplified to single service** - Better performance
+- **Direct ChatGPT connection** - No API key routing
 
-# End-to-end test
-curl -X POST http://localhost:3000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "test"}]}'
-```
-
-## Monitoring & Observability
-
-### Metrics Collection
-- **Node.js:** Custom Express middleware for request/response timing
-- **LiteLLM:** Built-in Prometheus metrics export
-- **Combined:** Unified dashboard showing end-to-end performance
-
-### Key Metrics
-- Request count and error rates
-- Latency histograms (p50, p95, p99)
-- Cost tracking per model/provider
-- Hook execution times
-- MCP server health and circuit breaker status
-
-## Migration Strategy
-
-### Phase 1: LiteLLM Foundation (Week 1)
-1. Install and configure LiteLLM proxy
-2. Test provider connectivity (OpenAI, Anthropic)
-3. Verify streaming and cost tracking
-4. Replace current Python proxy logic
-
-### Phase 2: Node.js Middleware (Week 2)
-1. Build Express.js proxy server
-2. Implement basic request forwarding to LiteLLM
-3. Add slash command parsing and execution
-4. Implement configuration system (.claude/.codex)
-
-### Phase 3: Advanced Features (Week 3-4)
-1. Hook system implementation
-2. MCP integration with HTTP/SSE support
-3. Security controls and permission prompts
-4. Performance optimization and monitoring
-
-## Risk Mitigation
-
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| **LiteLLM Dependency** | High | Pin versions, maintain fallback to direct API calls |
-| **Inter-service Latency** | Medium | Monitor closely, optimize request pipeline |
-| **Configuration Complexity** | Low | Comprehensive documentation, validation tools |
-| **Security Vulnerabilities** | High | Regular dependency updates, sandbox restrictions |
+### What Stayed
+- **Slash commands** - Implemented in Python
+- **Hooks system** - Integrated into proxy
+- **MCP support** - Can be added to Python
+- **Configuration structure** - Same .claude directory
 
 ## Future Considerations
 
-### Scalability
-- **Horizontal scaling:** Load balancer → multiple Node.js instances → shared LiteLLM
-- **Caching:** Redis integration for configuration and response caching
-- **Multi-tenant:** Separate LiteLLM instances per organization/team
+### Potential Enhancements
+1. **Session persistence** - Store conversations locally
+2. **Command plugins** - Dynamic command loading
+3. **Hook marketplace** - Share hooks between users
+4. **Multi-provider support** - Add Claude API as alternative (would need LiteLLM then)
 
-### Enterprise Features
-- **SAML/SSO integration** for MCP authentication
-- **Advanced audit logging** with structured export
-- **Custom model fine-tuning** pipeline integration
-- **Real-time cost alerts** and budget enforcement
+### What We Won't Do
+- Add unnecessary middleware layers
+- Use LiteLLM for ChatGPT (incompatible)
+- Complicate the simple working solution
+
+## Conclusion
+
+The simple curl_cffi proxy is the optimal solution for Codex-Plus. It solves the core problem (Cloudflare bypass) elegantly and provides a solid foundation for all planned features without unnecessary complexity.

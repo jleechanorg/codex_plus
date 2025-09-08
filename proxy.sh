@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# M1 Simple Passthrough Proxy Control Script
+# Codex-Plus Simple Proxy Control Script
 # Usage: ./proxy.sh [enable|disable|status|restart]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PATH="$SCRIPT_DIR/venv"
-START_SCRIPT="$SCRIPT_DIR/start.py"
+PROXY_MODULE="main_sync_cffi"
 # Runtime files under /tmp/codex_plus
 RUNTIME_DIR="/tmp/codex_plus"
 PID_FILE="$RUNTIME_DIR/proxy.pid"
@@ -83,7 +83,7 @@ start_proxy() {
     
     # Start proxy in background
     source "$VENV_PATH/bin/activate"
-    nohup python "$START_SCRIPT" > "$LOG_FILE" 2>&1 &
+    nohup python -c "from $PROXY_MODULE import app; import uvicorn; uvicorn.run(app, host='127.0.0.1', port=3000)" > "$LOG_FILE" 2>&1 &
     PID=$!
     echo "$PID" > "$PID_FILE"
     
@@ -115,7 +115,7 @@ stop_proxy() {
         fi
     else
         echo -e "${YELLOW}⚠️  No PID file found, attempting to kill any running proxy processes${NC}"
-        pkill -f "python.*start.py" && echo -e "${GREEN}✅ Killed proxy processes${NC}" || echo -e "${YELLOW}⚠️  No proxy processes found${NC}"
+        pkill -f "python.*$PROXY_MODULE" && echo -e "${GREEN}✅ Killed proxy processes${NC}" || echo -e "${YELLOW}⚠️  No proxy processes found${NC}"
     fi
 }
 
@@ -127,7 +127,7 @@ restart_proxy() {
 }
 
 show_help() {
-    echo -e "${BLUE}M1 Simple Passthrough Proxy Control Script${NC}"
+    echo -e "${BLUE}Codex-Plus Simple Proxy Control Script${NC}"
     echo ""
     echo "Usage: $0 [command]"
     echo ""
