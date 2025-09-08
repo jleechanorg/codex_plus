@@ -1,0 +1,67 @@
+model_list:
+  # OpenAI Models (using forwarded auth headers from Codex CLI)
+  - model_name: gpt-4
+    litellm_params:
+      model: openai/gpt-4
+      # No API key - use forwarded Authorization header
+  
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      # No API key - use forwarded Authorization header
+      
+  - model_name: gpt-5
+    litellm_params:
+      model: openai/gpt-5
+      # No API key - use forwarded Authorization header
+
+  # Anthropic Models (using forwarded auth headers from Codex CLI)
+  - model_name: claude-3-5-sonnet
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      # No API key - use forwarded Authorization header
+
+  - model_name: claude-3-5-haiku
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-20241022
+      # No API key - use forwarded Authorization header
+
+router_settings:
+  routing_strategy: usage-based-routing
+  model_group_alias: 
+    "gpt5-high": "gpt-5"
+    "gpt-high": "gpt-5"
+  retry_strategy: 
+    - "exponential_backoff"
+  cooldown_time: 1
+  num_retries: 3
+
+general_settings:
+  # Cost and usage tracking
+  cost_tracking: true
+  stream: true
+  max_budget: 100
+  budget_duration: 30d
+  
+  # Performance settings
+  max_parallel_requests: 100
+  request_timeout: 300
+  
+  # Logging
+  set_verbose: false
+  json_logs: true
+  
+  # Health checks
+  health_check_interval: 300
+
+litellm_settings:
+  # Streaming support
+  stream: true
+  complete_response_log: false
+  
+  # Error handling
+  drop_params: true
+  add_function_to_prompt: true
+  
+  # Security
+  turn_off_message_logging: false
