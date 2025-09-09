@@ -4,27 +4,34 @@ argument-hint: "[PR number]"
 model: "claude-3-5-sonnet-20241022"
 ---
 
-Reply to all comments on pull request #$ARGUMENTS. Here's what you need to do:
+Post replies to all comments on PR #$ARGUMENTS using the tag [AI responder codex].
 
-1. First, get the repository information and fetch all review comments from PR #$ARGUMENTS
-2. For each review comment you find, post a reply acknowledging it
-3. Post a summary comment saying you've reviewed all feedback
+Execute these commands:
 
-Use the GitHub CLI (gh) to fetch comments and post replies. Make sure to actually post replies using `gh api` with POST method to the issues endpoint.
-
-Start by running:
 ```bash
+# Get repo info
 owner=$(gh repo view --json owner --jq .owner.login)
 repo=$(gh repo view --json name --jq .name)
-gh api repos/$owner/$repo/pulls/$ARGUMENTS/comments --paginate | jq '.[] | {id, body, user}'
-```
 
-Then for each comment, post a reply using:
-```bash
-gh api repos/$owner/$repo/issues/$ARGUMENTS/comments -X POST -f body="Your reply text here"
-```
+# Get all review comments
+comments=$(gh api repos/$owner/$repo/pulls/$ARGUMENTS/comments --paginate)
+comment_count=$(echo "$comments" | jq length)
+echo "Found $comment_count review comments"
 
-Make sure you actually post the replies, don't just acknowledge the comments.
+# Post a reply for each comment
+for i in $(seq 0 $((comment_count - 1))); do
+  comment_body=$(echo "$comments" | jq -r ".[$i].body" | head -c 50)
+  echo "Replying to comment: $comment_body..."
+  gh api repos/$owner/$repo/issues/$ARGUMENTS/comments \
+    -X POST \
+    -f body="[AI responder codex] Acknowledged review comment: \"$comment_body...\" - This feedback will be addressed in the implementation."
+done
+
+# Post summary
+gh api repos/$owner/$repo/issues/$ARGUMENTS/comments \
+  -X POST \
+  -f body="[AI responder codex] All $comment_count review comments have been acknowledged and will be addressed."
+```
 
 ### Phase 5: Push Changes
 After all fixes are complete:

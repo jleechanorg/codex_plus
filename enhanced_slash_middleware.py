@@ -401,18 +401,9 @@ class EnhancedSlashCommandMiddleware:
                     command_def.prompt_template, parsed_args
                 )
                 
-                # Frame as executable instruction for consistency with classic middleware
-                framed = (
-                    "SLASH COMMAND EXECUTION: You have received an expanded command from the Codex Plus proxy.\n\n"
-                    f"Original command: {input_text.strip()}\n\n"
-                    "INSTRUCTIONS: The following content is the expanded definition of the command. "
-                    "Execute the instructions contained within this command definition. Follow all steps, "
-                    "workflows, and procedures described in the command content.\n\n"
-                    "COMMAND CONTENT TO EXECUTE:\n"
-                    f"{processed_prompt}\n\n"
-                    "Execute this command now by following all instructions, workflows, and procedures described above."
-                )
-                return framed
+                # Return raw prompt - no wrapper needed
+                # Codex will execute it as if user typed it directly
+                return processed_prompt
         
         except Exception as e:
             logger.error(f"Error executing command {command_name}: {e}")
