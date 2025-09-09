@@ -350,16 +350,16 @@ class EnhancedSlashCommandMiddleware:
                     if item.get('type') == 'message' and item.get('role') == 'user':
                         for content_item in item.get('content', []):
                             if content_item.get('type') == 'input_text':
-                                text = content_item.get('text', '').strip()
-                                if text.startswith('/'):
-                                    logger.info(f"Processing slash command: {text}")
-                                    processed_content = self._execute_command(text)
-                                    if processed_content:
-                                        logger.info(f"Replacing '{text}' with expanded content (length: {len(processed_content)})")
+                                original_text = content_item.get('text', '')
+                                text = original_text
+                                # Detect any slash command anywhere in the text
+                                if re.search(r'/(?:[A-Za-z0-9_-]+)', text):
+                                    logger.info(f"Processing slash commands in text: {text[:80]}...")
+                                    processed_content = self._expand_all_commands_in_text(text)
+                                    if processed_content and processed_content != original_text:
+                                        logger.info("Expanded one or more slash commands in input text")
                                         content_item['text'] = processed_content
                                         modified = True
-                                    else:
-                                        logger.warning(f"No expansion for command: {text}")
             
             if modified:
                 new_body = json.dumps(data, ensure_ascii=False).encode('utf-8')
@@ -372,6 +372,43 @@ class EnhancedSlashCommandMiddleware:
             logger.error(f"Error processing request body: {e}")
         
         return body, headers
+
+    def _expand_all_commands_in_text(self, text: str) -> str:
+        """Expand all /commands in the given text while preserving other content.
+
+        Heuristic segmentation: a command starts at '/' followed by a valid name.
+        The command segment extends until the next ' /<name>' boundary or end of text.
+        """
+        result_parts: List[str] = []
+        i = 0
+        length = len(text)
+        while i < length:
+            m = re.search(r'/[A-Za-z0-9_-]+', text[i:])
+            if not m:
+                # No more commands
+                result_parts.append(text[i:])
+                break
+            start = i + m.start()
+            # Append text before this command
+            if start > i:
+                result_parts.append(text[i:start])
+
+            # Find boundary to next command: look for space followed by '/<name>'
+            boundary_search = re.search(r'\s/(?=[A-Za-z0-9_-])', text[start + 1:])
+            if boundary_search:
+                seg_end = start + 1 + boundary_search.start()
+            else:
+                seg_end = length
+
+            cmd_text = text[start:seg_end].strip()
+            replacement = self._execute_command(cmd_text)
+            if replacement:
+                result_parts.append(replacement)
+            else:
+                result_parts.append(cmd_text)
+            i = seg_end
+
+        return ''.join(result_parts)
     
     def _execute_command(self, input_text: str) -> Optional[str]:
         """Execute slash command - unified execution flow"""
