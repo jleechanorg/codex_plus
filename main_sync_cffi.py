@@ -11,15 +11,25 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from curl_cffi import requests
 import logging
+import os
 from enhanced_slash_middleware import create_enhanced_slash_command_middleware
+from slash_command_middleware import create_slash_command_middleware
 
 app = FastAPI()
 
 # Configuration
 UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Codex
 
-# Initialize enhanced slash command middleware
-slash_middleware = create_enhanced_slash_command_middleware(upstream_url=UPSTREAM_URL)
+# Initialize slash command middleware
+# Support selecting classic or enhanced implementation via env var for
+# backwards compatibility with existing deployments/tests.
+_mw_choice = os.getenv("CODEX_PLUS_MIDDLEWARE", "enhanced").lower()
+if _mw_choice == "classic":
+    logger.info("Initializing classic SlashCommandMiddleware (compat mode)")
+    slash_middleware = create_slash_command_middleware(upstream_url=UPSTREAM_URL)
+else:
+    logger.info("Initializing enhanced SlashCommandMiddleware")
+    slash_middleware = create_enhanced_slash_command_middleware(upstream_url=UPSTREAM_URL)
 
 # Logger setup
 logger = logging.getLogger("codex_plus_proxy")
