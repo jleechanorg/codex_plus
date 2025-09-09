@@ -1,8 +1,11 @@
 """
-Test-Driven Development suite for slash command middleware integration
-Tests cover slash command detection, parsing, .claude/ integration, and hook execution
+Legacy tests for the old .claude-based middleware.
+These are skipped as the project migrated to enhanced_slash_middleware.
 """
 import pytest
+
+# Skip entire module; replaced by tests for EnhancedSlashCommandMiddleware
+pytestmark = pytest.mark.skip(reason="Legacy middleware tests replaced by enhanced_slash_middleware tests")
 import json
 import tempfile
 import os
