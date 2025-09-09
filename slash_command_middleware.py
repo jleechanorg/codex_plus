@@ -79,47 +79,82 @@ class SlashCommandMiddleware:
         
         try:
             data = json.loads(body)
-            # Check messages for slash commands
+            
+            # Check messages for slash commands (standard format)
             if "messages" in data:
                 for message in data["messages"]:
                     if isinstance(message, dict) and "content" in message:
                         content = message["content"]
                         if isinstance(content, str) and re.search(r'/\w+', content):
                             return True
+            
+            # Check input field for slash commands (Codex CLI format)
+            if "input" in data:
+                for item in data["input"]:
+                    if isinstance(item, dict) and item.get("type") == "message":
+                        content_list = item.get("content", [])
+                        for content_item in content_list:
+                            if isinstance(content_item, dict) and content_item.get("type") == "input_text":
+                                text = content_item.get("text", "")
+                                # Only match slash commands at start of line or after whitespace
+                                if re.search(r'(?:^|\s)/\w+', text):
+                                    logger.info(f"Detected slash command in input field: {text[:50]}...")
+                                    return True
+            
             return False
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.error(f"Error detecting slash command: {e}")
             return False
     
     def extract_slash_commands(self, body: str) -> List[SlashCommand]:
         """Extract all slash commands from request body"""
         commands = []
         
+        def extract_from_text(text: str):
+            """Helper to extract commands from text"""
+            # Only match slash commands at start of line or after whitespace
+            matches = re.finditer(r'(?:^|\s)(/(\w+)([^\n]*))', text)
+            for match in matches:
+                cmd_name = match.group(2)
+                raw_args = match.group(3).strip()
+                
+                # Parse arguments
+                try:
+                    args = shlex.split(raw_args) if raw_args else []
+                except ValueError:
+                    # Fallback to simple split if shlex fails
+                    args = raw_args.split() if raw_args else []
+                
+                commands.append(SlashCommand(
+                    name=cmd_name,
+                    args=args,
+                    raw_args=raw_args,
+                    original_text=match.group(1)  # The full slash command part
+                ))
+        
         try:
             data = json.loads(body)
+            
+            # Check messages field (standard format)
             if "messages" in data:
                 for message in data["messages"]:
                     if isinstance(message, dict) and "content" in message:
                         content = message["content"]
                         if isinstance(content, str):
-                            # Find all slash commands in the content
-                            matches = re.finditer(r'/(\w+)([^\n]*)', content)
-                            for match in matches:
-                                cmd_name = match.group(1)
-                                raw_args = match.group(2).strip()
-                                
-                                # Parse arguments
-                                try:
-                                    args = shlex.split(raw_args) if raw_args else []
-                                except ValueError:
-                                    # Fallback to simple split if shlex fails
-                                    args = raw_args.split() if raw_args else []
-                                
-                                commands.append(SlashCommand(
-                                    name=cmd_name,
-                                    args=args,
-                                    raw_args=raw_args,
-                                    original_text=match.group(0)
-                                ))
+                            extract_from_text(content)
+            
+            # Check input field (Codex CLI format)
+            if "input" in data:
+                for item in data["input"]:
+                    if isinstance(item, dict) and item.get("type") == "message":
+                        content_list = item.get("content", [])
+                        for content_item in content_list:
+                            if isinstance(content_item, dict) and content_item.get("type") == "input_text":
+                                text = content_item.get("text", "")
+                                if text:
+                                    logger.info(f"Extracting commands from input text: {text[:50]}...")
+                                    extract_from_text(text)
+                                    
         except (json.JSONDecodeError, TypeError) as e:
             logger.error(f"Failed to extract slash commands: {e}")
         
@@ -359,11 +394,177 @@ class SlashCommandMiddleware:
             )
             
         except Exception as e:
-            logger.exception(f"Error proxying request: {e}")
+            logger.error(f"Proxy request failed: {e}")
             return JSONResponse(
-                {"error": str(e)},
+                content={"error": f"Proxy failed: {str(e)}"},
                 status_code=500
             )
+    
+    async def proxy_request_with_body(self, method: str, target_url: str, body: bytes, headers: dict) -> Response:
+        """Proxy request with modified body and headers"""
+        try:
+            # Use synchronous curl_cffi with Chrome impersonation
+            session = requests.Session(impersonate="chrome124")
+            
+            # Make the request with streaming
+            response = session.request(
+                method,
+                target_url,
+                headers=headers,
+                data=body,
+                stream=True,
+                timeout=30
+            )
+            
+            # Stream the response back
+            def stream_response():
+                try:
+                    for chunk in response.iter_content(chunk_size=None):
+                        if chunk:
+                            yield chunk
+                finally:
+                    response.close()
+                    session.close()
+            
+            # Get response headers
+            resp_headers = dict(response.headers)
+            resp_headers.pop("content-length", None)  # Remove as we're streaming
+            resp_headers.pop("content-encoding", None)  # Remove encoding headers
+            
+            return StreamingResponse(
+                stream_response(),
+                status_code=response.status_code,
+                headers=resp_headers,
+                media_type=resp_headers.get("content-type", "text/event-stream")
+            )
+            
+        except Exception as e:
+            logger.error(f"Proxy request failed: {e}")
+            return JSONResponse(
+                content={"error": f"Proxy failed: {str(e)}"},
+                status_code=500
+            )
+    
+    async def expand_commands_in_body(self, body_str: str, commands: List[SlashCommand]) -> str:
+        """Expand slash commands in request body by properly modifying JSON structure"""
+        try:
+            # Parse JSON body
+            data = json.loads(body_str)
+            
+            # Handle Codex CLI format with input field
+            if "input" in data:
+                for item in data["input"]:
+                    if isinstance(item, dict) and item.get("type") == "message":
+                        content_list = item.get("content", [])
+                        for content_item in content_list:
+                            if isinstance(content_item, dict) and content_item.get("type") == "input_text":
+                                text = content_item.get("text", "")
+                                # Replace commands in this text
+                                modified_text = await self.replace_commands_in_text(text, commands)
+                                if modified_text != text:
+                                    # Frame expanded commands as executable instructions
+                                    instruction_framed = self.frame_as_executable_instruction(text, modified_text, commands)
+                                    logger.info(f"📝 JSON UPDATE: Changing content_item text from '{text}' to '{instruction_framed[:100]}...'")
+                                    content_item["text"] = instruction_framed
+                                    logger.info(f"✅ Modified input text: {len(text)} -> {len(instruction_framed)} chars")
+                                else:
+                                    logger.warning(f"⚠️ No text modification occurred: '{text}' remained unchanged")
+            
+            # Handle standard format with messages field
+            elif "messages" in data:
+                for message in data["messages"]:
+                    if isinstance(message, dict) and "content" in message:
+                        content = message["content"]
+                        if isinstance(content, str):
+                            modified_content = await self.replace_commands_in_text(content, commands)
+                            if modified_content != content:
+                                message["content"] = modified_content
+                                logger.info(f"Modified message content: {len(content)} -> {len(modified_content)} chars")
+            
+            # Return modified JSON
+            modified_json = json.dumps(data, separators=(',', ':'))
+            logger.info(f"🔍 FINAL JSON CHECK: Modified JSON length = {len(modified_json)} chars")
+            
+            # Verify the modification actually worked
+            final_data = json.loads(modified_json)
+            if "input" in final_data:
+                for item in final_data["input"]:
+                    if isinstance(item, dict) and item.get("type") == "message":
+                        content_list = item.get("content", [])
+                        for content_item in content_list:
+                            if isinstance(content_item, dict) and content_item.get("type") == "input_text":
+                                final_text = content_item.get("text", "")
+                                logger.info(f"✅ VERIFICATION: Final text in JSON: '{final_text[:100]}...'")
+            
+            return modified_json
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON body: {e}")
+            return body_str
+        except Exception as e:
+            logger.error(f"Error expanding commands in JSON: {e}")
+            return body_str
+    
+    async def replace_commands_in_text(self, text: str, commands: List[SlashCommand]) -> str:
+        """Replace slash commands in text with their expanded content"""
+        modified_text = text
+        
+        for command in commands:
+            logger.info(f"Attempting to replace '{command.original_text}' in text of length {len(text)}")
+            if command.original_text in text:
+                try:
+                    # Execute command to get its content
+                    result = await self.execute_command(command)
+                    if "content" in result:
+                        command_content = result["content"]
+                        # Replace the original slash command with expanded content
+                        modified_text = modified_text.replace(command.original_text, command_content)
+                        logger.info(f"✅ Replaced /{command.name}: '{command.original_text}' -> {len(command_content)} chars")
+                    else:
+                        logger.warning(f"Command /{command.name} returned no content")
+                        
+                except Exception as e:
+                    logger.error(f"Failed to expand command /{command.name}: {e}")
+                    # Leave original command text if expansion fails
+            else:
+                logger.warning(f"❌ Command text '{command.original_text}' NOT FOUND in text: '{text[:100]}...'")
+                    
+        return modified_text
+    
+    def frame_as_executable_instruction(self, original_text: str, expanded_text: str, commands: List[SlashCommand]) -> str:
+        """Frame expanded command content as executable instructions following Claude Code CLI pattern"""
+        
+        # Extract command names for the instruction
+        command_names = [cmd.name for cmd in commands]
+        
+        # Create execution instruction following Claude Code CLI pattern
+        if len(commands) == 1:
+            instruction = f"""SLASH COMMAND EXECUTION: You have received an expanded command from the Codex Plus proxy.
+
+Original command: {original_text.strip()}
+Command: /{commands[0].name}
+
+INSTRUCTIONS: The following content is the expanded definition of the /{commands[0].name} command. Execute the instructions contained within this command definition. Follow all steps, workflows, and procedures described in the command content.
+
+COMMAND CONTENT TO EXECUTE:
+{expanded_text}
+
+Execute this command now by following all instructions, workflows, and procedures described above."""
+        else:
+            cmd_list = ", ".join([f"/{name}" for name in command_names])
+            instruction = f"""SLASH COMMAND EXECUTION: You have received expanded commands from the Codex Plus proxy.
+
+Original: {original_text.strip()}
+Commands: {cmd_list}
+
+INSTRUCTIONS: The following content contains expanded definitions of multiple commands. Execute all instructions contained within these command definitions. Follow all steps, workflows, and procedures described.
+
+COMMAND CONTENT TO EXECUTE:
+{expanded_text}
+
+Execute these commands now by following all instructions, workflows, and procedures described above."""
+        
+        return instruction
     
     async def process_request(self, request: Request, path: str) -> Response:
         """Main middleware entry point - process request and return response"""
@@ -384,22 +585,34 @@ class SlashCommandMiddleware:
         if self.detect_slash_command(body_str):
             logger.info(f"Detected slash commands in {request.method} /{path}")
             
-            # Extract and process commands
+            # Extract commands
             commands = self.extract_slash_commands(body_str)
             if commands:
                 try:
-                    # Process slash commands
-                    command_results = await self.process_slash_commands(commands)
+                    # Expand commands in the request body
+                    modified_body_str = await self.expand_commands_in_body(body_str, commands)
                     
-                    # Return command response instead of proxying
-                    return await self.create_command_response(command_results)
+                    if modified_body_str != body_str:
+                        # Update request body and Content-Length
+                        modified_body = modified_body_str.encode('utf-8')
+                        
+                        # Get headers and update Content-Length
+                        headers = {}
+                        for key, value in request.headers.items():
+                            if key.lower() != "host":
+                                headers[key] = value
+                        headers["content-length"] = str(len(modified_body))
+                        
+                        logger.info(f"Modified request body: {len(body)} -> {len(modified_body)} bytes")
+                        
+                        # Proxy the modified request
+                        return await self.proxy_request_with_body(request.method, target_url, modified_body, headers)
                     
                 except Exception as e:
-                    logger.error(f"Error processing slash commands: {e}")
-                    # Fall back to proxying on error
-                    return await self.proxy_request(request, target_url, body)
+                    logger.error(f"Error expanding slash commands: {e}")
+                    # Fall back to proxying original request
         
-        # No slash commands detected - proxy normally
+        # No slash commands or expansion failed - proxy original request
         return await self.proxy_request(request, target_url, body)
 
 

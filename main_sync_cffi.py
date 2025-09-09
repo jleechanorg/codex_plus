@@ -2,20 +2,24 @@
 """
 Codex Plus Proxy using curl_cffi synchronous client for better SSE handling
 Now with integrated slash command middleware for .claude/ infrastructure
+
+🚨 CRITICAL: This proxy REQUIRES curl_cffi to bypass Cloudflare 🚨
+DO NOT replace with httpx, requests, or any other HTTP client
+Codex uses ChatGPT backend with session auth, NOT OpenAI API keys
 """
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from curl_cffi import requests
 import logging
-from slash_command_middleware import create_slash_command_middleware
+from enhanced_slash_middleware import create_enhanced_slash_command_middleware
 
 app = FastAPI()
 
 # Configuration
 UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Codex
 
-# Initialize slash command middleware
-slash_middleware = create_slash_command_middleware(upstream_url=UPSTREAM_URL)
+# Initialize enhanced slash command middleware
+slash_middleware = create_enhanced_slash_command_middleware(upstream_url=UPSTREAM_URL)
 
 # Logger setup
 logger = logging.getLogger("codex_plus_proxy")
