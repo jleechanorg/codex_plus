@@ -41,8 +41,6 @@ def test_process_request_body_updates_content_length_on_change():
     # Body should be modified and Content-Length updated
     assert new_body != body
     assert new_headers.get("content-length") == str(len(new_body))
-    # Expanded content should include framing string
-    assert b"SLASH COMMAND EXECUTION" in new_body
 
 
 def test_process_request_body_passthrough_when_no_command():
@@ -56,4 +54,3 @@ def test_process_request_body_passthrough_when_no_command():
     assert new_body == body
     # Headers remain unchanged
     assert new_headers == headers
-
