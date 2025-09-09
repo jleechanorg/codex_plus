@@ -291,7 +291,7 @@ class EnhancedSlashCommandMiddleware:
         # Process slash commands first
         processed_body, processed_headers = self.process_request_body(body, headers)
         
-        # No local test mode; always forward requests upstream
+        # Always forward requests upstream (no local test mode)
         
         # Normal proxy mode - forward to upstream WITH CHROME IMPERSONATION
         norm_path = path.lstrip("/")

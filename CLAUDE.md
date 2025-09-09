@@ -17,6 +17,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ❌ Changing the upstream URL → Must be ChatGPT backend
 - ❌ Removing Chrome impersonation → Instant Cloudflare block
 
+## No Local Test Mode
+
+This proxy does not implement any local mock or test mode. All incoming requests are forwarded upstream. For development and testing, expect 401 Unauthorized from ChatGPT backend when you don’t provide valid session authentication. Do not rely on shortcuts like special headers; they are not supported.
+
 ## Project Overview
 
 **Codex-Plus** is an HTTP proxy that intercepts Codex CLI requests to add power-user features (slash commands, hooks, MCP tools, persistent sessions) while maintaining identical UI/UX to Codex CLI.
