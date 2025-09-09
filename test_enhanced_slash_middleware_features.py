@@ -128,3 +128,40 @@ Got: $ARGUMENTS | first=$1 | second=$2
                     parent.rmdir()
         except Exception:
             pass
+
+
+def test_multiple_slash_commands_expansion():
+    mw = create_enhanced_slash_command_middleware()
+    # Use repo-provided .codexplus/commands/echo.md
+    payload = {
+        "model": "gpt-5",
+        "instructions": "Test",
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "First /echo one then /echo two please"
+                    }
+                ],
+            }
+        ],
+        "tools": [],
+        "tool_choice": "auto",
+        "parallel_tool_calls": True,
+        "reasoning": False,
+        "store": False,
+        "stream": False,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    headers = {"content-type": "application/json", "content-length": str(len(body))}
+
+    new_body, new_headers = mw.process_request_body(body, headers)
+    assert new_body != body
+    assert int(new_headers.get("content-length", "0")) == len(new_body)
+    # Should include both expanded echoes (case-insensitive)
+    lowered = new_body.decode("utf-8").lower()
+    assert "echo: one" in lowered
+    assert "echo: two" in lowered
