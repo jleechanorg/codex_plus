@@ -4,7 +4,7 @@ argument-hint: "[PR number]"
 model: "claude-3-5-sonnet-20241022"
 ---
 
-Post replies to all comments on PR #$ARGUMENTS using the tag [AI responder codex].
+Post replies to all comments on the current PR (PR #2) using the tag [AI responder codex].
 
 Execute these commands:
 
@@ -13,8 +13,8 @@ Execute these commands:
 owner=$(gh repo view --json owner --jq .owner.login)
 repo=$(gh repo view --json name --jq .name)
 
-# Get all review comments
-comments=$(gh api repos/$owner/$repo/pulls/$ARGUMENTS/comments --paginate)
+# Get all review comments for PR #2
+comments=$(gh api repos/$owner/$repo/pulls/2/comments --paginate)
 comment_count=$(echo "$comments" | jq length)
 echo "Found $comment_count review comments"
 
@@ -22,13 +22,13 @@ echo "Found $comment_count review comments"
 for i in $(seq 0 $((comment_count - 1))); do
   comment_body=$(echo "$comments" | jq -r ".[$i].body" | head -c 50)
   echo "Replying to comment: $comment_body..."
-  gh api repos/$owner/$repo/issues/$ARGUMENTS/comments \
+  gh api repos/$owner/$repo/issues/2/comments \
     -X POST \
     -f body="[AI responder codex] Acknowledged review comment: \"$comment_body...\" - This feedback will be addressed in the implementation."
 done
 
 # Post summary
-gh api repos/$owner/$repo/issues/$ARGUMENTS/comments \
+gh api repos/$owner/$repo/issues/2/comments \
   -X POST \
   -f body="[AI responder codex] All $comment_count review comments have been acknowledged and will be addressed."
 ```
