@@ -1,44 +1,30 @@
 ---
-description: "Reply to all PR comments immediately"
+description: "Process and reply to PR comments"
 argument-hint: "[PR number]"
 model: "claude-3-5-sonnet-20241022"
 ---
 
-# AUTO-REPLY TO PR COMMENTS
+Reply to all comments on pull request #$ARGUMENTS. Here's what you need to do:
 
-**EXECUTE THESE EXACT COMMANDS IN ORDER:**
+1. First, get the repository information and fetch all review comments from PR #$ARGUMENTS
+2. For each review comment you find, post a reply acknowledging it
+3. Post a summary comment saying you've reviewed all feedback
 
+Use the GitHub CLI (gh) to fetch comments and post replies. Make sure to actually post replies using `gh api` with POST method to the issues endpoint.
+
+Start by running:
 ```bash
-# 1. Get repository info
 owner=$(gh repo view --json owner --jq .owner.login)
 repo=$(gh repo view --json name --jq .name)
-echo "Repository: $owner/$repo"
-
-# 2. Fetch all PR review comments
-echo "Fetching PR #$ARGUMENTS comments..."
-comments=$(gh api repos/$owner/$repo/pulls/$ARGUMENTS/comments --paginate)
-echo "$comments" | jq length
-
-# 3. POST A REPLY TO EACH COMMENT - MANDATORY
-echo "Posting replies to all comments..."
-echo "$comments" | jq -r '.[] | .id' | while read comment_id; do
-  echo "Replying to comment $comment_id..."
-  gh api repos/$owner/$repo/issues/$ARGUMENTS/comments \
-    -X POST \
-    -f body="Thank you for the review comment #$comment_id. I've analyzed this feedback and will address it in the implementation."
-done
-
-# 4. Post a summary comment
-gh api repos/$owner/$repo/issues/$ARGUMENTS/comments \
-  -X POST \
-  -f body="All review comments have been acknowledged. Processing implementation fixes now."
-
-# 5. Verify replies were posted
-echo "Verifying replies..."
-gh api repos/$owner/$repo/issues/$ARGUMENTS/comments --paginate | jq length
+gh api repos/$owner/$repo/pulls/$ARGUMENTS/comments --paginate | jq '.[] | {id, body, user}'
 ```
 
-**IMPORTANT**: You MUST execute ALL these commands. Do not skip the posting step.
+Then for each comment, post a reply using:
+```bash
+gh api repos/$owner/$repo/issues/$ARGUMENTS/comments -X POST -f body="Your reply text here"
+```
+
+Make sure you actually post the replies, don't just acknowledge the comments.
 
 ### Phase 5: Push Changes
 After all fixes are complete:

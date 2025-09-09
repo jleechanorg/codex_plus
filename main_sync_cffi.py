@@ -17,6 +17,11 @@ from slash_command_middleware import create_slash_command_middleware
 
 app = FastAPI()
 
+# Logger setup (must be defined before first use)
+logger = logging.getLogger("codex_plus_proxy")
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO)
+
 # Configuration
 UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Codex
 
@@ -30,11 +35,6 @@ if _mw_choice == "classic":
 else:
     logger.info("Initializing enhanced SlashCommandMiddleware")
     slash_middleware = create_enhanced_slash_command_middleware(upstream_url=UPSTREAM_URL)
-
-# Logger setup
-logger = logging.getLogger("codex_plus_proxy")
-if not logger.handlers:
-    logging.basicConfig(level=logging.INFO)
 
 @app.get("/health")
 async def health():
