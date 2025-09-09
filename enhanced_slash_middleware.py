@@ -401,8 +401,9 @@ class EnhancedSlashCommandMiddleware:
                     command_def.prompt_template, parsed_args
                 )
                 
-                # Format as proper AI message
-                return f"SLASH COMMAND EXECUTION: You have received an expanded command from the Codex Plus proxy.\n\nOriginal: /{command_name} {args_str}\n\nExpanded Command:\n{processed_prompt}"
+                # Return the raw expanded prompt without any wrapper
+                # This allows Codex to treat it exactly as if the user typed it directly
+                return processed_prompt
         
         except Exception as e:
             logger.error(f"Error executing command {command_name}: {e}")

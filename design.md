@@ -483,9 +483,11 @@ class SlashCommandModule(ABC):
       If `None` is returned, no upstream forwarding occurs and the proxy will
       instead call `execute_locally`.
     - `execute_locally(args) -> Optional[Dict[str, Any]]`: Perform local work
-      (e.g., save conversation, run a script) and return a JSON-serializable
-      structure to send back to the client. Return `None` if nothing needs to
-      be returned.
+      (e.g., save conversation, run a script). Returning a dict causes the
+      proxy to send a local JSON response to the client. Returning `None`
+      indicates the command performed no user-visible local response. It does
+      NOT trigger a fallback to ChatGPT; upstream forwarding only occurs when
+      `mutate_prompt` returns a non-empty string.
 
     Note: Implementations MUST also provide a `create_module()` factory at the
     module level so the loader can instantiate them.
@@ -511,10 +513,11 @@ class SlashCommandModule(ABC):
         raise NotImplementedError
     
     def execute_locally(self, args: str) -> Optional[Dict[str, Any]]:
-        """Optionally perform local execution when `mutate_prompt` returns None.
+        """Perform local execution when `mutate_prompt` returns None.
 
-        Returning a dict causes the proxy to send a local JSON response to the
-        client. Returning `None` indicates there is nothing to return.
+        - Return a dict to send a local JSON response to the client.
+        - Return `None` to indicate no user-visible local response is needed.
+          This does not forward anything upstream.
         """
         return None
 
