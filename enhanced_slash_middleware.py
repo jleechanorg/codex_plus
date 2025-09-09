@@ -355,8 +355,11 @@ class EnhancedSlashCommandMiddleware:
                                     logger.info(f"Processing slash command: {text}")
                                     processed_content = self._execute_command(text)
                                     if processed_content:
+                                        logger.info(f"Replacing '{text}' with expanded content (length: {len(processed_content)})")
                                         content_item['text'] = processed_content
                                         modified = True
+                                    else:
+                                        logger.warning(f"No expansion for command: {text}")
             
             if modified:
                 new_body = json.dumps(data, ensure_ascii=False).encode('utf-8')
