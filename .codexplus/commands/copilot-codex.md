@@ -1,20 +1,24 @@
 ---
 description: "Process and reply to PR comments"
-argument-hint: "[PR number]"
+argument-hint: "[PR number or 'analyze PR N']"
 model: "claude-3-5-sonnet-20241022"
 ---
 
-Post replies to all comments on the current PR (PR #2) using the tag [AI responder codex].
+Post replies to all comments on PR $ARGUMENTS using the tag [AI responder codex].
 
 Execute these commands:
 
 ```bash
+# Extract PR number from arguments (handles both "2" and "analyze PR 2" formats)
+pr_num=$(echo "$ARGUMENTS" | grep -oE '[0-9]+' | head -1)
+pr_num=${pr_num:-2}  # Default to PR 2 if no number found
+
 # Get repo info
 owner=$(gh repo view --json owner --jq .owner.login)
 repo=$(gh repo view --json name --jq .name)
 
-# Get all review comments for PR #2
-comments=$(gh api repos/$owner/$repo/pulls/2/comments --paginate)
+# Get all review comments for the PR
+comments=$(gh api repos/$owner/$repo/pulls/$pr_num/comments --paginate)
 comment_count=$(echo "$comments" | jq length)
 echo "Found $comment_count review comments"
 
@@ -22,13 +26,13 @@ echo "Found $comment_count review comments"
 for i in $(seq 0 $((comment_count - 1))); do
   comment_body=$(echo "$comments" | jq -r ".[$i].body" | head -c 50)
   echo "Replying to comment: $comment_body..."
-  gh api repos/$owner/$repo/issues/2/comments \
+  gh api repos/$owner/$repo/issues/$pr_num/comments \
     -X POST \
     -f body="[AI responder codex] Acknowledged review comment: \"$comment_body...\" - This feedback will be addressed in the implementation."
 done
 
 # Post summary
-gh api repos/$owner/$repo/issues/2/comments \
+gh api repos/$owner/$repo/issues/$pr_num/comments \
   -X POST \
   -f body="[AI responder codex] All $comment_count review comments have been acknowledged and will be addressed."
 ```
@@ -66,13 +70,13 @@ Check that:
 
 ```bash
 # Get PR details
-gh pr view 2 --json title,body,state,comments
+gh pr view $pr_num --json title,body,state,comments
 
 # Fetch all comments
-gh api repos/jleechan2015/codex_plus/pulls/2/comments --paginate
+gh api repos/$owner/$repo/pulls/$pr_num/comments --paginate
 
 # Post a reply
-gh api repos/jleechan2015/codex_plus/pulls/2/comments \
+gh api repos/$owner/$repo/pulls/$pr_num/comments \
   -f body="Fixed the import issue in line 45" \
   -f in_reply_to=123456
 
