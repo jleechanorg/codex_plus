@@ -2,11 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🚨 CRITICAL: DO NOT BREAK THE PROXY 🚨
+
+**MANDATORY REQUIREMENTS - NEVER CHANGE THESE:**
+1. **MUST use `curl_cffi.requests.Session(impersonate="chrome124")`** - Regular requests WILL FAIL (Cloudflare blocks them)
+2. **MUST forward to `https://chatgpt.com/backend-api/codex`** - This is NOT OpenAI API
+3. **NO API KEYS** - Codex uses session cookies/JWT from `~/.config/codex/auth.json`
+4. **NEVER replace proxy forwarding logic** - Only extend with middleware
+5. **ALWAYS test that normal requests still get 401** - This means proxy is working
+
+**Common Mistakes to Avoid:**
+- ❌ Using `httpx` or regular `requests` → Cloudflare will block
+- ❌ Looking for OPENAI_API_KEY → Codex doesn't use API keys
+- ❌ Changing the upstream URL → Must be ChatGPT backend
+- ❌ Removing Chrome impersonation → Instant Cloudflare block
+
 ## Project Overview
 
 **Codex-Plus** is an HTTP proxy that intercepts Codex CLI requests to add power-user features (slash commands, hooks, MCP tools, persistent sessions) while maintaining identical UI/UX to Codex CLI.
 
-**Architecture**: FastAPI-based HTTP proxy that forwards requests to `api.openai.com` with transparent streaming support.
+**Architecture**: FastAPI proxy using `curl_cffi` with Chrome impersonation to bypass Cloudflare and forward to ChatGPT backend.
 
 ## Development Commands
 
@@ -66,7 +81,7 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 
 ### Request Flow
 1. Codex CLI → HTTP proxy (localhost:3000) 
-2. Proxy forwards to `api.openai.com` with preserved headers/streaming
+2. Proxy forwards to `https://chatgpt.com/backend-api/codex` with preserved headers/streaming
 3. Response streams back through proxy to Codex CLI
 4. Special handling: `/health` endpoint returns local status (not forwarded)
 
@@ -80,7 +95,7 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 
 ### ✅ M1: Simple Passthrough Proxy (Complete)
 - HTTP proxy intercepting Codex requests via `OPENAI_BASE_URL`
-- FastAPI + httpx async streaming to `api.openai.com`
+- FastAPI + curl_cffi streaming to `https://chatgpt.com/backend-api/codex`
 - Complete TDD test coverage (request forwarding, streaming, errors)
 - Process management and health monitoring
 
