@@ -81,8 +81,9 @@ async def proxy(request: Request, path: str):
 #### Key Architecture Components
 
 1. **Command Discovery System**
-   - Scans `.claude/commands/*.md` files for command definitions
-   - Supports both user-scoped (`~/.claude/commands/`) and project-scoped commands  
+   - Scans `.codexplus/commands/*.md` files for command definitions (primary)
+   - Also supports `.claude/commands/*.md` for backward compatibility
+   - Supports both user-scoped (`~/.codexplus/commands/` and `~/.claude/commands/`) and project-scoped commands  
    - File names determine command names (e.g., `copilot.md` → `/copilot`)
    - Subdirectories create namespaces (e.g., `git/status.md` → `/git:status`)
 
@@ -100,23 +101,24 @@ async def proxy(request: Request, path: str):
 #### Current Implementation Status
 
 ```python
-# slash_command_middleware.py - WORKING IMPLEMENTATION  
-class SlashCommandMiddleware:
-    def discover_commands(self) -> Dict[str, str]:
-        """Discover .claude/commands/*.md files"""
-        commands = {}
-        project_dir = Path(".claude/commands")
-        if project_dir.exists():
-            for md_file in project_dir.rglob("*.md"):
-                rel_path = md_file.relative_to(project_dir)
-                command_name = str(rel_path.with_suffix(''))
-                commands[command_name] = str(md_file)
-        return commands
-    
+# EnhancedSlashCommandMiddleware - WORKING IMPLEMENTATION  
+class EnhancedSlashCommandMiddleware:
+    def _load_markdown_commands(self):
+        """Load markdown commands from project and user scopes"""
+        for directory in [
+            '.codexplus/commands',
+            '.claude/commands',  # compatibility
+            # str(Path.home() / '.codexplus' / 'commands'),
+            # str(Path.home() / '.claude' / 'commands'),
+        ]:
+            commands = self.loader.scan_directory(directory)
+            for cmd in commands:
+                self.registry.register(cmd)
+
     def process_request_body(self, body: bytes, headers: dict) -> Tuple[bytes, dict]:
-        """Expand slash commands in request body"""
+        """Expand slash commands in request body and update Content-Length"""
         # JSON parsing and command detection
-        # Command expansion with argument substitution  
+        # Command expansion with argument substitution
         # Content-Length header update (CRITICAL for Cloudflare)
         return modified_body, modified_headers
 ```
@@ -472,7 +474,22 @@ async def execute_bash_command(content: str, frontmatter: Dict[str, Any]) -> Dic
 
 # Enhanced Module System (optional layer on top of Claude Code CLI compatibility)
 class SlashCommandModule(ABC):
-    """Optional enhancement layer for advanced prompt mutation"""
+    """Optional enhancement layer for advanced slash-command handling.
+
+    Interface contract:
+    - `can_handle(command, args) -> bool`: Return True if this module applies.
+    - `mutate_prompt(original_prompt, args) -> Optional[str]`: If a non-empty
+      string is returned, the mutated prompt is forwarded upstream to ChatGPT.
+      If `None` is returned, no upstream forwarding occurs and the proxy will
+      instead call `execute_locally`.
+    - `execute_locally(args) -> Optional[Dict[str, Any]]`: Perform local work
+      (e.g., save conversation, run a script) and return a JSON-serializable
+      structure to send back to the client. Return `None` if nothing needs to
+      be returned.
+
+    Note: Implementations MUST also provide a `create_module()` factory at the
+    module level so the loader can instantiate them.
+    """
     
     def __init__(self, command_name: str):
         self.command_name = command_name
@@ -483,17 +500,30 @@ class SlashCommandModule(ABC):
     def can_handle(self, command: str, args: str) -> bool:
         return command == self.command_name
     
-    @abstractmethod 
-    def enhance_prompt(self, claude_content: str, args: str, frontmatter: Dict[str, Any]) -> str:
-        """Enhance the Claude Code CLI processed content (optional)"""
-        return claude_content
+    @abstractmethod
+    def mutate_prompt(self, original_prompt: str, args: str) -> Optional[str]:
+        """Optionally return a mutated prompt to forward upstream.
+
+        - Return a non-empty string to forward that content to ChatGPT.
+        - Return `None` to indicate local execution should be performed by
+          `execute_locally` instead of forwarding upstream.
+        """
+        raise NotImplementedError
+    
+    def execute_locally(self, args: str) -> Optional[Dict[str, Any]]:
+        """Optionally perform local execution when `mutate_prompt` returns None.
+
+        Returning a dict causes the proxy to send a local JSON response to the
+        client. Returning `None` indicates there is nothing to return.
+        """
+        return None
 
 # Main slash command handler with EXACT Claude Code CLI compatibility
 async def handle_slash_command(command: str, args: str, original_body: bytes):
     """Handle slash command with EXACT Claude Code CLI compatibility"""
     
     # Remove leading slash for file lookup
-    command_name = command[1:] if command.startswith('/') else command
+    command_name = command.lstrip('/')
     
     # Discover all available commands (both .claude and ~/.claude)
     available_commands = discover_claude_commands()
@@ -698,7 +728,7 @@ async def handle_slash_command(command: str, args: str, original_body: bytes):
                 return create_local_response(result)
     
     # Fallback: Check for Claude Code CLI .md commands
-    md_command_path = f".claude/commands/{command[1:]}.md"  # Remove leading /
+    md_command_path = f".claude/commands/{command.lstrip('/')}" + ".md"  # Remove any leading '/'
     if os.path.exists(md_command_path):
         # Read markdown command and execute as enhanced prompt
         with open(md_command_path, 'r') as f:

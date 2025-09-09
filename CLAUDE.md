@@ -45,7 +45,6 @@ pytest -k "test_name_pattern" -v           # Run pattern-matched tests
 ./proxy.sh disable                         # Stop proxy
 
 # Manual server start (for debugging)
-python start.py                            # Direct server start
 uvicorn main:app --host 127.0.0.1 --port 3000 --reload  # With reload
 ```
 
@@ -75,7 +74,7 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 
 ### Current Implementation (M1 - Simple Passthrough Proxy)
 - **Entry Point**: `main.py` - FastAPI application with single proxy route
-- **Startup**: `start.py` - Uvicorn server configuration (127.0.0.1:3000)
+- **Startup**: Via `proxy.sh` or `uvicorn main:app --host 127.0.0.1 --port 3000`
 - **Control**: `proxy.sh` - Process management (start/stop/status/restart)
 - **Testing**: `test_proxy.py` - Comprehensive TDD test suite (11 tests)
 
@@ -86,7 +85,7 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 4. Special handling: `/health` endpoint returns local status (not forwarded)
 
 ### Key Components
-- **Streaming Support**: `httpx.AsyncClient.stream()` preserves real-time responses
+- **Streaming Support**: `curl_cffi.requests.Session(impersonate="chrome124").request(..., stream=True)` with `iter_content` preserves real-time responses
 - **Header Management**: Filters hop-by-hop headers, preserves auth/content headers  
 - **Error Passthrough**: HTTP errors (401, 429, 500) forwarded transparently
 - **Process Management**: PID-based daemon control via `proxy.sh`
@@ -120,7 +119,6 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 ```
 codex_plus/
 ├── main.py           # FastAPI proxy application
-├── start.py          # Uvicorn server startup
 ├── proxy.sh          # Process control script  
 ├── test_proxy.py     # TDD test suite
 ├── requirements.txt  # Python dependencies
@@ -158,7 +156,7 @@ pytest test_proxy.py::TestSimplePassthroughProxy::test_request_forwarding -v
 ### Code Style
 - **FastAPI**: Use async/await for all I/O operations
 - **Error Handling**: Always preserve upstream HTTP status codes and messages
-- **Streaming**: Use `httpx.AsyncClient.stream()` for real-time response handling
+- **Streaming**: Use `curl_cffi` streaming via `iter_content` for real-time response handling
 - **Logging**: Use structured logging for debugging and monitoring
 
 ### Security Considerations  

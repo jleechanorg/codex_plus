@@ -240,10 +240,18 @@ class EnhancedSlashCommandMiddleware:
         project_commands = self.loader.scan_directory('.codexplus/commands')
         for cmd in project_commands:
             self.registry.register(cmd)
-        
-        # Load from ~/.codexplus/commands/ (user-level) - future enhancement
-        # user_commands = self.loader.scan_directory(str(Path.home() / '.codexplus' / 'commands'))
-        # for cmd in user_commands:
+
+        # Also load from .claude/commands/ for backward compatibility
+        claude_commands = self.loader.scan_directory('.claude/commands')
+        for cmd in claude_commands:
+            self.registry.register(cmd)
+
+        # Load from user-level directories (future enhancement)
+        # user_codexplus = self.loader.scan_directory(str(Path.home() / '.codexplus' / 'commands'))
+        # for cmd in user_codexplus:
+        #     self.registry.register(cmd)
+        # user_claude = self.loader.scan_directory(str(Path.home() / '.claude' / 'commands'))
+        # for cmd in user_claude:
         #     self.registry.register(cmd)
     
     def _handle_help_command(self, args: Dict[str, Any]) -> str:
@@ -283,40 +291,7 @@ class EnhancedSlashCommandMiddleware:
         # Process slash commands first
         processed_body, processed_headers = self.process_request_body(body, headers)
         
-        # Check for test mode - only for explicit test-key
-        auth_header = headers.get('authorization', '')
-        if auth_header == 'Bearer test-key' and body != processed_body:
-            # Test mode - return successful mock response showing processed content
-            try:
-                data = json.loads(processed_body)
-                logger.info("Test mode: Returning mock response for processed slash command")
-                
-                # Extract the expanded command text
-                expanded_text = ""
-                if 'input' in data:
-                    for item in data['input']:
-                        if item.get('type') == 'message':
-                            for content in item.get('content', []):
-                                if content.get('type') == 'input_text':
-                                    expanded_text = content.get('text', '')
-                                    break
-                
-                # Return a mock successful response
-                mock_response = {
-                    "status": "success",
-                    "code": 200,
-                    "message": "Slash command processed successfully in test mode",
-                    "processed_command": {
-                        "original_size": len(body),
-                        "processed_size": len(processed_body),
-                        "expansion_ratio": f"{len(processed_body)/len(body):.2f}x",
-                        "expanded_prompt": expanded_text[:500] + "..." if len(expanded_text) > 500 else expanded_text
-                    },
-                    "mock_execution": "Command would be executed here with real authentication"
-                }
-                return JSONResponse(content=mock_response, status_code=200)
-            except Exception as e:
-                logger.error(f"Error in test mode: {e}")
+        # No local test mode; always forward requests upstream
         
         # Normal proxy mode - forward to upstream WITH CHROME IMPERSONATION
         norm_path = path.lstrip("/")
@@ -341,8 +316,8 @@ class EnhancedSlashCommandMiddleware:
             session = requests.Session(impersonate="chrome124")  # DO NOT CHANGE THIS LINE
             
             response = session.request(
-                method=request.method,
-                url=url,
+                request.method,
+                url,
                 headers=filtered_headers,
                 data=processed_body,
                 stream=True
