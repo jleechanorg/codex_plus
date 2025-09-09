@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from enhanced_slash_middleware import create_enhanced_slash_command_middleware
+from enhanced_slash_middleware import HybridCommandDef
 
 
 def test_handles_empty_body_returns_same():
@@ -74,3 +75,56 @@ def test_unknown_command_returns_message():
     out = mw._execute_command("/doesnotexist foo")
     assert "Unknown command" in out
 
+
+def test_builtin_handler_error_handling():
+    mw = create_enhanced_slash_command_middleware()
+    # Register a builtin that raises
+    def boom(_):
+        raise RuntimeError("boom")
+
+    mw.registry.register(HybridCommandDef(
+        name="boom",
+        description="Boom",
+        source="builtin",
+        handler=boom,
+    ))
+
+    out = mw._execute_command("/boom arg1")
+    assert "Error executing command /boom" in out or "Error executing command" in out
+
+
+def test_quoted_arguments_parsing_and_substitution(tmp_path):
+    # Create a command in .codexplus/commands
+    cmd_dir = Path(".codexplus/commands")
+    cmd_dir.mkdir(parents=True, exist_ok=True)
+    cmd_file = cmd_dir / "qargs.md"
+    cmd_file.write_text(
+        """---
+description: Quoted args test
+---
+
+Got: $ARGUMENTS | first=$1 | second=$2
+""",
+        encoding="utf-8",
+    )
+
+    try:
+        mw = create_enhanced_slash_command_middleware()
+        out = mw._execute_command('/qargs "fix all tests" --verbose')
+        assert "Got: fix all tests --verbose" in out
+        assert "first=fix all tests" in out
+        assert "second=--verbose" in out
+    finally:
+        try:
+            cmd_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        # Clean up if empty
+        try:
+            if cmd_dir.exists() and not any(cmd_dir.iterdir()):
+                cmd_dir.rmdir()
+                parent = cmd_dir.parent
+                if parent.exists() and not any(parent.iterdir()):
+                    parent.rmdir()
+        except Exception:
+            pass

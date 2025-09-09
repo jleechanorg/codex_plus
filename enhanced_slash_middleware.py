@@ -416,8 +416,9 @@ class EnhancedSlashCommandMiddleware:
     
     def _parse_args(self, args_str: str) -> Dict[str, Any]:
         """Parse command arguments - simplified version of TypeScript parseArgs"""
-        # For MVP, simple space-splitting with raw args preservation
-        raw_args = args_str.split() if args_str.strip() else []
+        # Use shlex to properly handle quoted arguments
+        import shlex as _shlex
+        raw_args = _shlex.split(args_str) if args_str.strip() else []
         
         return {
             '_raw_args': raw_args,

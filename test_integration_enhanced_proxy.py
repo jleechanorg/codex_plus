@@ -46,7 +46,7 @@ def test_expanded_request_proxies_with_streaming(tmp_path):
     # Mock upstream streaming response
     mock_response = Mock()
     mock_response.status_code = 200
-    mock_response.headers = {"content-type": "text/event-stream"}
+    mock_response.headers = {"content-type": "text/event-stream", "x-test": "ok"}
     mock_response.iter_content.return_value = iter([b"data: ok\n\n"])
 
     with patch("curl_cffi.requests.Session") as mock_session_cls:
@@ -70,3 +70,7 @@ def test_expanded_request_proxies_with_streaming(tmp_path):
         # Body sent upstream should be bytes
         sent_body = kwargs.get("data")
         assert isinstance(sent_body, (bytes, bytearray))
+
+        # Response headers preserved (content-type and custom header)
+        assert resp.headers.get("content-type") == "text/event-stream"
+        assert resp.headers.get("x-test") == "ok"
