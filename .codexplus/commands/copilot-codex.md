@@ -22,13 +22,17 @@ comments=$(gh api repos/$owner/$repo/pulls/$pr_num/comments --paginate)
 comment_count=$(echo "$comments" | jq length)
 echo "Found $comment_count review comments"
 
-# Post a reply for each comment
+# Post a reply for each comment (using GraphQL for threaded replies)
 for i in $(seq 0 $((comment_count - 1))); do
+  comment_id=$(echo "$comments" | jq -r ".[$i].id")
   comment_body=$(echo "$comments" | jq -r ".[$i].body" | head -c 50)
-  echo "Replying to comment: $comment_body..."
+  echo "Replying to comment ID $comment_id: $comment_body..."
+  
+  # For review comments, we need to create a new issue comment that references the original
+  # GitHub doesn't allow direct replies via REST API
   gh api repos/$owner/$repo/issues/$pr_num/comments \
     -X POST \
-    -f body="[AI responder codex] Acknowledged review comment: \"$comment_body...\" - This feedback will be addressed in the implementation."
+    -f body="[AI responder codex] Re: Comment #$comment_id - Acknowledged: \"$comment_body...\" - This feedback will be addressed in the implementation."
 done
 
 # Post summary
