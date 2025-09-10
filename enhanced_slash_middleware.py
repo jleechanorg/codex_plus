@@ -199,6 +199,9 @@ class ArgumentSubstitutor:
 class EnhancedSlashCommandMiddleware:
     """Enhanced middleware using TypeScript patterns with markdown support"""
     
+    # Security: Maximum request body size to prevent ReDoS (10MB)
+    MAX_BODY_SIZE = 10 * 1024 * 1024
+    
     def __init__(self, upstream_url: str):
         self.upstream_url = upstream_url
         self.registry = CommandRegistry()
@@ -340,6 +343,11 @@ class EnhancedSlashCommandMiddleware:
 
     def process_request_body(self, body: bytes, headers: dict) -> Tuple[bytes, dict]:
         """Process request body for slash commands"""
+        # Security: Check body size before processing
+        if len(body) > self.MAX_BODY_SIZE:
+            logger.warning(f"Request body too large: {len(body)} bytes")
+            return body, headers
+        
         try:
             data = json.loads(body)
             modified = False
@@ -352,8 +360,9 @@ class EnhancedSlashCommandMiddleware:
                             if content_item.get('type') == 'input_text':
                                 original_text = content_item.get('text', '')
                                 text = original_text
-                                # Detect any slash command anywhere in the text
-                                if re.search(r'/(?:[A-Za-z0-9_-]+)', text):
+                                # Detect slash commands with word boundary for consistency
+                                # Match commands at start of line or after whitespace (like classic middleware)
+                                if re.search(r'(?:^|\s)/[A-Za-z0-9_-]+', text):
                                     logger.info(f"Processing slash commands in text: {text[:80]}...")
                                     processed_content = self._expand_all_commands_in_text(text)
                                     if processed_content and processed_content != original_text:
@@ -406,7 +415,12 @@ class EnhancedSlashCommandMiddleware:
                 result_parts.append(replacement)
             else:
                 result_parts.append(cmd_text)
+            
+            # Fix: Prevent infinite loop by ensuring progress
+            prev_i = i
             i = seg_end
+            if i <= prev_i:
+                i = prev_i + 1  # Force advancement if no progress made
 
         return ''.join(result_parts)
     
@@ -447,7 +461,9 @@ class EnhancedSlashCommandMiddleware:
         
         except Exception as e:
             logger.error(f"Error executing command {command_name}: {e}")
-            return f"Error executing command /{command_name}: {str(e)}"
+            # Safety: Return None to avoid corrupting JSON structure
+            # Let the original command text be preserved instead
+            return None
         
         return None
     
