@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
 Codex Plus Proxy using curl_cffi synchronous client for better SSE handling
+Now with integrated hook system for request/response modification
 """
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from curl_cffi import requests
 import logging
+import json
+from hooks import HookSystem
 
 app = FastAPI()
 
@@ -16,6 +19,9 @@ UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Co
 logger = logging.getLogger("codex_plus_proxy")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
+
+# Initialize hook system (auto-discovers hooks on init)
+hook_system = HookSystem()
 
 @app.get("/health")
 async def health():
@@ -44,8 +50,20 @@ async def proxy(request: Request, path: str):
     # Log incoming request
     logger.info(f"Proxying {request.method} /{path} -> {target_url}")
     
-    # Read body - TRUE PASSTHROUGH, NO MODIFICATIONS
+    # Read body
     body = await request.body()
+    
+    # Apply pre-input hooks if we have JSON body
+    if body and path == "responses":
+        try:
+            body_dict = json.loads(body)
+            # Apply pre-input hooks
+            modified_body = await hook_system.execute_hooks('pre-input', request, body_dict)
+            if modified_body != body_dict:
+                body = json.dumps(modified_body).encode('utf-8')
+                logger.info("Pre-input hooks applied, body modified")
+        except (json.JSONDecodeError, Exception) as e:
+            logger.debug(f"Could not apply hooks: {e}")
     
     # Debug: Log request body to see system prompts
     logger.debug(f"Path: {path}, Body length: {len(body) if body else 0}")
