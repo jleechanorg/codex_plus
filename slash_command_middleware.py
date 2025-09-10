@@ -39,11 +39,16 @@ class CommandMetadata:
 class SlashCommandMiddleware:
     """Middleware for processing slash commands and integrating with .claude/ infrastructure"""
     
+    # Security: Maximum request body size to prevent ReDoS (10MB)
+    MAX_BODY_SIZE = 10 * 1024 * 1024
+    
     def __init__(self, upstream_url: str = "https://api.openai.com"):
         self.upstream_url = upstream_url
         self.claude_dir = self._find_claude_dir()
         self.commands_dir = self.claude_dir / "commands" if self.claude_dir else None
         self.hooks_config = self._load_hooks_config()
+        # Performance: Reuse session for connection pooling
+        self._session = None
     
     def _find_claude_dir(self) -> Optional[Path]:
         """Find .claude directory in project hierarchy"""
@@ -75,6 +80,11 @@ class SlashCommandMiddleware:
     def detect_slash_command(self, body: str) -> bool:
         """Detect if request body contains slash commands"""
         if not body:
+            return False
+        
+        # Security: Check body size before processing
+        if len(body) > self.MAX_BODY_SIZE:
+            logger.warning(f"Request body too large: {len(body)} bytes")
             return False
         
         try:
@@ -165,15 +175,25 @@ class SlashCommandMiddleware:
         if not self.commands_dir or not self.commands_dir.exists():
             return None
         
-        # Try exact match first
-        command_file = self.commands_dir / f"{command_name}.md"
-        if command_file.exists():
+        # Security: Validate command name to prevent path traversal
+        import re
+        if not re.match(r'^[a-zA-Z0-9_-]+$', command_name):
+            logger.warning(f"Invalid command name format: {command_name}")
+            return None
+        
+        # Additional safety: Resolve paths and verify containment
+        base_path = self.commands_dir.resolve()
+        
+        # Try exact match first with path validation
+        command_file = (base_path / f"{command_name}.md").resolve()
+        if str(command_file).startswith(str(base_path)) and command_file.exists():
             return command_file
         
-        # Try case-insensitive search
+        # Try case-insensitive search with validation
         for file_path in self.commands_dir.glob("*.md"):
-            if file_path.stem.lower() == command_name.lower():
-                return file_path
+            resolved_path = file_path.resolve()
+            if str(resolved_path).startswith(str(base_path)) and file_path.stem.lower() == command_name.lower():
+                return resolved_path
         
         return None
     
@@ -357,8 +377,10 @@ class SlashCommandMiddleware:
                 headers[key] = value
         
         try:
-            # Use synchronous curl_cffi with Chrome impersonation
-            session = requests.Session(impersonate="chrome124")
+            # Performance: Reuse session for connection pooling
+            if not self._session:
+                self._session = requests.Session(impersonate="chrome124")
+            session = self._session
             
             # Make the request with streaming
             response = session.request(
@@ -370,16 +392,23 @@ class SlashCommandMiddleware:
                 timeout=30
             )
             
-            # Stream the response back
+            # Stream the response back with proper cleanup
             def stream_response():
                 try:
                     # Stream raw content without buffering
                     for chunk in response.iter_content(chunk_size=None):
                         if chunk:
                             yield chunk
+                except Exception as e:
+                    logger.error(f"Error during streaming: {e}")
+                    raise
                 finally:
-                    response.close()
-                    session.close()
+                    # Cleanup happens after streaming completes or on error
+                    try:
+                        response.close()
+                    except:
+                        pass
+                    # Don't close the reused session
             
             # Get response headers
             resp_headers = dict(response.headers)
@@ -403,8 +432,10 @@ class SlashCommandMiddleware:
     async def proxy_request_with_body(self, method: str, target_url: str, body: bytes, headers: dict) -> Response:
         """Proxy request with modified body and headers"""
         try:
-            # Use synchronous curl_cffi with Chrome impersonation
-            session = requests.Session(impersonate="chrome124")
+            # Performance: Reuse session for connection pooling
+            if not self._session:
+                self._session = requests.Session(impersonate="chrome124")
+            session = self._session
             
             # Make the request with streaming
             response = session.request(
