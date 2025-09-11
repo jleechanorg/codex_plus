@@ -210,6 +210,19 @@ IMPORTANT:
         # Forward to upstream
         target_url = f"{self.upstream_url}/{path.lstrip('/')}"
         
+        # Remove hop-by-hop headers that shouldn't be forwarded
+        hop_by_hop = {
+            'connection', 'keep-alive', 'proxy-authenticate', 
+            'proxy-authorization', 'te', 'trailers', 
+            'transfer-encoding', 'upgrade', 'host'
+        }
+        
+        # Clean headers for forwarding
+        clean_headers = {}
+        for k, v in headers.items():
+            if k.lower() not in hop_by_hop:
+                clean_headers[k] = v
+        
         try:
             # Use synchronous curl_cffi with Chrome impersonation
             if not hasattr(self, '_session'):
@@ -220,7 +233,7 @@ IMPORTANT:
             response = session.request(
                 request.method,
                 target_url,
-                headers=headers,
+                headers=clean_headers,
                 data=body if body else None,
                 stream=True,
                 timeout=30
