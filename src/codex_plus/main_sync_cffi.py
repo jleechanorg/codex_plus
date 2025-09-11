@@ -11,7 +11,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from curl_cffi import requests
 import logging
-import os
 
 app = FastAPI()
 
