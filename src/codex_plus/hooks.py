@@ -139,12 +139,17 @@ class HookSystem:
             logger.error(f"Error executing Python code in {file_path}: {e}")
             return None
         
-        # Find the hook class
-        hook_class = getattr(module, 'Hook', None)
-        if not hook_class or not issubclass(hook_class, Hook):
-            logger.warning(f"No valid Hook class found in {file_path}")
+        # Find a subclass of Hook defined in the module (excluding base Hook)
+        hook_class = None
+        for name, obj in module.__dict__.items():
+            if name == 'Hook':
+                continue
+            if isinstance(obj, type) and issubclass(obj, Hook):
+                hook_class = obj
+                break
+        if hook_class is None:
+            logger.warning(f"No hook subclass found in {file_path}")
             return None
-        
         # Create hook instance
         return hook_class(file_path.stem, config)
     
