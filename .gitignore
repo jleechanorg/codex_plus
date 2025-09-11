@@ -70,3 +70,6 @@ proxy.pid
 
 # Claude Code configurations (contains secrets and user-specific settings)
 .claude/
+
+# Codex Plus temp artifacts
+/.codex_tmp/

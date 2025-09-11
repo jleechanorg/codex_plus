@@ -2,11 +2,30 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🚨 CRITICAL: DO NOT BREAK THE PROXY 🚨
+
+**MANDATORY REQUIREMENTS - NEVER CHANGE THESE:**
+1. **MUST use `curl_cffi.requests.Session(impersonate="chrome124")`** - Regular requests WILL FAIL (Cloudflare blocks them)
+2. **MUST forward to `https://chatgpt.com/backend-api/codex`** - This is NOT OpenAI API
+3. **NO API KEYS** - Codex uses session cookies/JWT from `~/.config/codex/auth.json`
+4. **NEVER replace proxy forwarding logic** - Only extend with middleware
+5. **ALWAYS test that normal requests still get 401** - This means proxy is working
+
+**Common Mistakes to Avoid:**
+- ❌ Using `httpx` or regular `requests` → Cloudflare will block
+- ❌ Looking for OPENAI_API_KEY → Codex doesn't use API keys
+- ❌ Changing the upstream URL → Must be ChatGPT backend
+- ❌ Removing Chrome impersonation → Instant Cloudflare block
+
+## No Local Test Mode
+
+This proxy does not implement any local mock or test mode. All incoming requests are forwarded upstream. For development and testing, expect 401 Unauthorized from ChatGPT backend when you don’t provide valid session authentication. Do not rely on shortcuts like special headers; they are not supported.
+
 ## Project Overview
 
 **Codex-Plus** is an HTTP proxy that intercepts Codex CLI requests to add power-user features (slash commands, hooks, MCP tools, persistent sessions) while maintaining identical UI/UX to Codex CLI.
 
-**Architecture**: FastAPI-based HTTP proxy that forwards requests to `api.openai.com` with transparent streaming support.
+**Architecture**: FastAPI proxy using `curl_cffi` with Chrome impersonation to bypass Cloudflare and forward to ChatGPT backend.
 
 ## Development Commands
 
@@ -30,7 +49,6 @@ pytest -k "test_name_pattern" -v           # Run pattern-matched tests
 ./proxy.sh disable                         # Stop proxy
 
 # Manual server start (for debugging)
-python start.py                            # Direct server start
 uvicorn main:app --host 127.0.0.1 --port 3000 --reload  # With reload
 ```
 
@@ -60,18 +78,18 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 
 ### Current Implementation (M1 - Simple Passthrough Proxy)
 - **Entry Point**: `main.py` - FastAPI application with single proxy route
-- **Startup**: `start.py` - Uvicorn server configuration (127.0.0.1:3000)
+- **Startup**: Via `proxy.sh` or `uvicorn main:app --host 127.0.0.1 --port 3000`
 - **Control**: `proxy.sh` - Process management (start/stop/status/restart)
 - **Testing**: `test_proxy.py` - Comprehensive TDD test suite (11 tests)
 
 ### Request Flow
 1. Codex CLI → HTTP proxy (localhost:3000) 
-2. Proxy forwards to `api.openai.com` with preserved headers/streaming
+2. Proxy forwards to `https://chatgpt.com/backend-api/codex` with preserved headers/streaming
 3. Response streams back through proxy to Codex CLI
 4. Special handling: `/health` endpoint returns local status (not forwarded)
 
 ### Key Components
-- **Streaming Support**: `httpx.AsyncClient.stream()` preserves real-time responses
+- **Streaming Support**: `curl_cffi.requests.Session(impersonate="chrome124").request(..., stream=True)` with `iter_content` preserves real-time responses
 - **Header Management**: Filters hop-by-hop headers, preserves auth/content headers  
 - **Error Passthrough**: HTTP errors (401, 429, 500) forwarded transparently
 - **Process Management**: PID-based daemon control via `proxy.sh`
@@ -80,7 +98,7 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 
 ### ✅ M1: Simple Passthrough Proxy (Complete)
 - HTTP proxy intercepting Codex requests via `OPENAI_BASE_URL`
-- FastAPI + httpx async streaming to `api.openai.com`
+- FastAPI + curl_cffi streaming to `https://chatgpt.com/backend-api/codex`
 - Complete TDD test coverage (request forwarding, streaming, errors)
 - Process management and health monitoring
 
@@ -105,7 +123,6 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 ```
 codex_plus/
 ├── main.py           # FastAPI proxy application
-├── start.py          # Uvicorn server startup
 ├── proxy.sh          # Process control script  
 ├── test_proxy.py     # TDD test suite
 ├── requirements.txt  # Python dependencies
@@ -143,7 +160,7 @@ pytest test_proxy.py::TestSimplePassthroughProxy::test_request_forwarding -v
 ### Code Style
 - **FastAPI**: Use async/await for all I/O operations
 - **Error Handling**: Always preserve upstream HTTP status codes and messages
-- **Streaming**: Use `httpx.AsyncClient.stream()` for real-time response handling
+- **Streaming**: Use `curl_cffi` streaming via `iter_content` for real-time response handling
 - **Logging**: Use structured logging for debugging and monitoring
 
 ### Security Considerations  

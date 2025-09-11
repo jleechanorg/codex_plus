@@ -54,7 +54,7 @@ Codex-Plus is a control plane for AI-assisted development that enhances Codex CL
 **User Story:** As a power user, I want sophisticated slash commands with arguments, file references, and shell integration so I can automate complex workflows.
 
 **Implementation:** 
-- Markdown files in `.claude/commands/` (checked first) or `.codex/commands/` (fallback)
+- Markdown files in `.codexplus/commands/` (primary) and `.claude/commands/` (compatibility)
 - YAML frontmatter: `allowed-tools`, `argument-hint`, `description`, `model`
 - Subdirectories create namespaced commands (e.g., `.claude/commands/frontend/component.md` → `/component` with "(project:frontend)" description)
 - Argument placeholders: `$ARGUMENTS` (all args), `$1 $2` (positional)
