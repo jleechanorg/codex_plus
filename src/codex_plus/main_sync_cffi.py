@@ -14,6 +14,8 @@ import logging
 import json as _json
 import json
 import sys
+import os
+import time
 
 app = FastAPI()
 
@@ -117,6 +119,13 @@ async def proxy(request: Request, path: str):
     # Option 3: Terminal status line simulation via ANSI escape codes
     
     async def run_git_header_async():
+        # Check if hooks are enabled
+        hooks_enabled = os.getenv('CODEX_HOOKS_ENABLED', 'true').lower() == 'true'
+        if not hooks_enabled:
+            logger.debug("Hooks disabled via CODEX_HOOKS_ENABLED=false")
+            return
+            
+        start_time = time.time()
         try:
             import subprocess
             from pathlib import Path
@@ -135,7 +144,7 @@ async def proxy(request: Request, path: str):
                     [str(git_header_script), "--status-only"],  # Use minimal output
                     capture_output=True,
                     text=True,
-                    timeout=45
+                    timeout=5  # Reduced from 45 to 5 seconds
                 )
                 
                 if result.stdout.strip():
@@ -148,15 +157,20 @@ async def proxy(request: Request, path: str):
                             break
                     
                     if status_line:
+                        execution_time = time.time() - start_time
                         logger.info("🎯 Git Status Line:")
                         logger.info(f"   {status_line}")
+                        logger.info(f"🕐 Git header took {execution_time:.2f}s")
                         
-                        # TODO: Implement status line display option
-                        # Could print to stderr so it appears in terminal
+                        # Print to stderr so it appears in terminal
                         print(f"\r{status_line}", file=sys.stderr, flush=True)
                         
+        except subprocess.TimeoutExpired:
+            execution_time = time.time() - start_time
+            logger.info(f"⚠️ Git header timed out after {execution_time:.2f}s")
         except Exception as e:
-            logger.debug(f"Git header execution failed: {e}")
+            execution_time = time.time() - start_time
+            logger.info(f"⚠️ Git header failed after {execution_time:.2f}s: {e}")
     
     # Start git header task asynchronously (fire and forget)
     asyncio.create_task(run_git_header_async())
