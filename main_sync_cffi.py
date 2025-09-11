@@ -27,7 +27,7 @@ UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Co
 
 # Initialize slash command middleware
 # Support selecting implementation via env var for testing different approaches
-_mw_choice = os.getenv("CODEX_PLUS_MIDDLEWARE", "enhanced").lower()
+_mw_choice = os.getenv("CODEX_PLUS_MIDDLEWARE", "llm").lower()
 
 if _mw_choice == "classic":
     logger.info("Initializing classic SlashCommandMiddleware (compat mode)")
