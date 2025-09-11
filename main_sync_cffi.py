@@ -12,7 +12,6 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from curl_cffi import requests
 import logging
 import os
-from enhanced_slash_middleware import create_enhanced_slash_command_middleware
 from slash_command_middleware import create_slash_command_middleware
 
 app = FastAPI()
@@ -32,13 +31,10 @@ _mw_choice = os.getenv("CODEX_PLUS_MIDDLEWARE", "llm").lower()
 if _mw_choice == "classic":
     logger.info("Initializing classic SlashCommandMiddleware (compat mode)")
     slash_middleware = create_slash_command_middleware(upstream_url=UPSTREAM_URL)
-elif _mw_choice == "llm":
+else:
     logger.info("Initializing LLM execution middleware (instruction mode)")
     from llm_execution_middleware import create_llm_execution_middleware
     slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
-else:
-    logger.info("Initializing enhanced SlashCommandMiddleware")
-    slash_middleware = create_enhanced_slash_command_middleware(upstream_url=UPSTREAM_URL)
 
 @app.get("/health")
 async def health():

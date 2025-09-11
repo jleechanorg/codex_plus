@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Focused tests for EnhancedSlashCommandMiddleware
+Adapted tests for LLMExecutionMiddleware (replacing EnhancedSlashCommandMiddleware)
 """
 import json
 import pytest
 
-from enhanced_slash_middleware import create_enhanced_slash_command_middleware
+from llm_execution_middleware import LLMExecutionMiddleware, create_llm_execution_middleware
 
 
 def make_codex_cli_payload(text: str) -> bytes:
@@ -31,26 +31,25 @@ def make_codex_cli_payload(text: str) -> bytes:
     return json.dumps(payload).encode("utf-8")
 
 
-def test_process_request_body_updates_content_length_on_change():
-    mw = create_enhanced_slash_command_middleware()
-    body = make_codex_cli_payload("/copilot-codex analyze PR")
-    headers = {"content-type": "application/json", "content-length": str(len(body))}
+def test_injects_execution_instruction_when_slash_command_present():
+    mw: LLMExecutionMiddleware = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
+    body = make_codex_cli_payload("/copilot analyze PR")
+    data = json.loads(body)
+    modified = mw.inject_execution_behavior(data)
+    # System instruction should be injected (in messages or input text)
+    if "messages" in modified:
+        assert modified["messages"][0]["role"] == "system"
+        assert "You are a slash command interpreter" in modified["messages"][0]["content"]
+    else:
+        # Codex input format: instruction prepended to input_text
+        txt = modified["input"][0]["content"][0]["text"]
+        assert txt.startswith("[SYSTEM:")
 
-    new_body, new_headers = mw.process_request_body(body, headers)
 
-    # Body should be modified and Content-Length updated
-    assert new_body != body
-    assert new_headers.get("content-length") == str(len(new_body))
-
-
-def test_process_request_body_passthrough_when_no_command():
-    mw = create_enhanced_slash_command_middleware()
+def test_no_injection_when_no_slash_command():
+    mw: LLMExecutionMiddleware = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
     body = make_codex_cli_payload("hello world")
-    headers = {"content-type": "application/json", "content-length": str(len(body))}
-
-    new_body, new_headers = mw.process_request_body(body, headers)
-
-    # No changes expected
-    assert new_body == body
-    # Headers remain unchanged
-    assert new_headers == headers
+    data = json.loads(body)
+    modified = mw.inject_execution_behavior(data)
+    # Should be identical when no slash command present
+    assert modified == data
