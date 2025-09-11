@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_execution_middleware import LLMExecutionMiddleware, create_llm_execution_middleware
+from codex_plus.llm_execution_middleware import LLMExecutionMiddleware, create_llm_execution_middleware
 
 
 def test_detect_slash_commands_and_instruction_building():

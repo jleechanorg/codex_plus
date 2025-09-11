@@ -5,8 +5,8 @@ from unittest.mock import patch, Mock
 
 from fastapi.testclient import TestClient
 
-from main import app
-from main_sync_cffi import slash_middleware
+from codex_plus.main import app
+from codex_plus.main_sync_cffi import slash_middleware
 
 
 def _make_payload(text: str) -> dict:

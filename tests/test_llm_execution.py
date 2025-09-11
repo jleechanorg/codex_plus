@@ -4,7 +4,7 @@ Test script for LLM execution middleware
 Tests whether instructing the LLM to execute commands works better than expanding them
 """
 import json
-from llm_execution_middleware import LLMExecutionMiddleware
+from codex_plus.llm_execution_middleware import LLMExecutionMiddleware
 
 def test_execution_instruction():
     """Test that we generate proper execution instructions"""

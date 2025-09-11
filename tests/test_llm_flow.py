@@ -5,7 +5,7 @@ Simulates what would happen when Codex CLI sends a slash command
 """
 import json
 import asyncio
-from llm_execution_middleware import LLMExecutionMiddleware
+from codex_plus.llm_execution_middleware import LLMExecutionMiddleware
 
 async def simulate_request():
     """Simulate a request from Codex CLI with a slash command"""
