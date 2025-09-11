@@ -119,12 +119,6 @@ async def proxy(request: Request, path: str):
     # Option 3: Terminal status line simulation via ANSI escape codes
     
     async def run_git_header_async():
-        # Check if hooks are enabled
-        hooks_enabled = os.getenv('CODEX_HOOKS_ENABLED', 'true').lower() == 'true'
-        if not hooks_enabled:
-            logger.debug("Hooks disabled via CODEX_HOOKS_ENABLED=false")
-            return
-            
         start_time = time.time()
         try:
             import subprocess
