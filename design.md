@@ -78,6 +78,13 @@ async def proxy(request: Request, path: str):
 
 **Implementation Status**: ✅ WORKING - Commands expand correctly, 401 errors indicate successful processing
 
+### Architecture Update: Middleware Consolidation (2025-09)
+- The codebase now consolidates on LLMExecutionMiddleware for executing slash commands by instructing the LLM to run command files (no classic/enhanced duplication).
+- Command resolution precedence: `.codexplus/commands` takes priority over `.claude/commands` when duplicates exist.
+- Temporary artifacts are written to `/tmp/{branch_name}/...` rather than stored in the repository.
+- Automated replies use the tag `[AI Responder codex]` and a consolidated summary issue comment is posted for auditability.
+- Historical references to the removed classic/enhanced middleware are preserved in this document for context but are not active code paths anymore.
+
 #### Key Architecture Components
 
 1. **Command Discovery System**
