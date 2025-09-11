@@ -13,6 +13,7 @@ from curl_cffi import requests
 import logging
 import json as _json
 import json
+import sys
 
 app = FastAPI()
 
@@ -107,4 +108,57 @@ async def proxy(request: Request, path: str):
             response = await process_post_output_hooks(response)
     except Exception as e:
         logger.debug(f"post-output hooks failed: {e}")
+    
+    # Execute git header hook and potentially modify response
+    import asyncio
+    
+    # Option 1: Add git status to streaming response (requires response modification)
+    # Option 2: Add git status as a separate message after main response
+    # Option 3: Terminal status line simulation via ANSI escape codes
+    
+    async def run_git_header_async():
+        try:
+            import subprocess
+            from pathlib import Path
+            
+            git_root = subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"], 
+                text=True, 
+                stderr=subprocess.DEVNULL
+            ).strip()
+            
+            git_header_script = Path(git_root) / ".claude/hooks/git-header.sh"
+            
+            if git_header_script.exists() and git_header_script.is_file():
+                logger.info("🔍 Executing git header script (async)...")
+                result = subprocess.run(
+                    [str(git_header_script), "--status-only"],  # Use minimal output
+                    capture_output=True,
+                    text=True,
+                    timeout=45
+                )
+                
+                if result.stdout.strip():
+                    # Extract just the colored status line (last line typically)
+                    lines = result.stdout.strip().split('\n')
+                    status_line = None
+                    for line in reversed(lines):
+                        if '[' in line and ']' in line:  # Find colored status line
+                            status_line = line.strip()
+                            break
+                    
+                    if status_line:
+                        logger.info("🎯 Git Status Line:")
+                        logger.info(f"   {status_line}")
+                        
+                        # TODO: Implement status line display option
+                        # Could print to stderr so it appears in terminal
+                        print(f"\r{status_line}", file=sys.stderr, flush=True)
+                        
+        except Exception as e:
+            logger.debug(f"Git header execution failed: {e}")
+    
+    # Start git header task asynchronously (fire and forget)
+    asyncio.create_task(run_git_header_async())
+    
     return response
