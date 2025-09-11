@@ -142,7 +142,6 @@ BEGIN EXECUTION NOW:
         """Modify request to inject execution behavior"""
         
         # Detect slash commands in the user's message
-        user_message = ""
         commands = []
         
         # Handle Codex CLI format with input field
@@ -156,7 +155,6 @@ BEGIN EXECUTION NOW:
                             detected = self.detect_slash_commands(text)
                             if detected:
                                 commands.extend(detected)
-                                user_message = text
         
         # Handle standard format with messages field
         elif "messages" in request_body:
@@ -166,7 +164,6 @@ BEGIN EXECUTION NOW:
                     detected = self.detect_slash_commands(text)
                     if detected:
                         commands.extend(detected)
-                        user_message = text
         
         # If we found slash commands, inject execution instructions
         if commands:
