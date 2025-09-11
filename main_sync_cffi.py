@@ -26,12 +26,16 @@ if not logger.handlers:
 UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Codex
 
 # Initialize slash command middleware
-# Support selecting classic or enhanced implementation via env var for
-# backwards compatibility with existing deployments/tests.
+# Support selecting implementation via env var for testing different approaches
 _mw_choice = os.getenv("CODEX_PLUS_MIDDLEWARE", "enhanced").lower()
+
 if _mw_choice == "classic":
     logger.info("Initializing classic SlashCommandMiddleware (compat mode)")
     slash_middleware = create_slash_command_middleware(upstream_url=UPSTREAM_URL)
+elif _mw_choice == "llm":
+    logger.info("Initializing LLM execution middleware (instruction mode)")
+    from llm_execution_middleware import create_llm_execution_middleware
+    slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
 else:
     logger.info("Initializing enhanced SlashCommandMiddleware")
     slash_middleware = create_enhanced_slash_command_middleware(upstream_url=UPSTREAM_URL)
