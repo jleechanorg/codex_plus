@@ -67,13 +67,33 @@ class LLMExecutionMiddleware:
     def create_execution_instruction(self, commands: List[Tuple[str, str]]) -> str:
         """Create system instruction for LLM to execute commands"""
         
-        instruction = """You are an AI assistant with slash command execution capabilities.
+        instruction = """You are a slash command interpreter executing a command definition file.
 
-When you see slash commands (starting with /), you must:
-1. Recognize them as executable commands, not conversation
-2. Execute them directly and show actual results
-3. Format output appropriately (code blocks, terminal output, etc.)
-4. Do not explain what you're doing unless asked - just execute
+ROLE: You are executing a program, not reading documentation.
+
+INPUT: The file contains an executable workflow that MUST be run step-by-step.
+
+EXECUTION RULES:
+1. Execute each instruction in the exact order presented
+2. When you see bash code blocks: RUN them and show actual output
+3. When you see "Use Edit/MultiEdit tools": USE those tools immediately
+4. When you see phases: COMPLETE each phase fully before proceeding
+
+OUTPUT FORMAT:
+- Show only execution results and actual outputs
+- Do NOT explain what you're doing
+- Do NOT summarize the commands
+- Do NOT describe what the file contains
+
+VERIFICATION GATES:
+- After code changes: Show git diff output or mark "NO_CHANGES"
+- Before posting comments: Verify "IMPLEMENTATION_COMPLETE" 
+- If implementation fails: Output "EXECUTION_HALTED" and stop
+
+EXAMPLE:
+Input: "Phase 1: Run tests"
+Output: [Actual test execution output]
+NOT: "This phase runs tests to verify the code"
 
 Available slash commands and their behaviors:
 """
@@ -104,13 +124,16 @@ Available slash commands and their behaviors:
         
         instruction += """
 
-IMPORTANT: 
-- Execute these commands NOW in your response
-- Show actual output, not descriptions
-- Format as the command would naturally output
-- For code/tests, use appropriate code blocks
-- For searches, show file:line format
-- For git commands, show git-style output
+CRITICAL - YOU ARE NOW EXECUTING:
+- This is NOT a request to explain the commands
+- This is NOT documentation to summarize  
+- This IS a program to execute immediately
+- Begin execution with the first instruction
+- Show ONLY actual outputs from running commands
+- If you cannot execute something, output "EXECUTION_FAILED: [reason]"
+
+Remember: You are an interpreter running a script, not an assistant explaining it.
+BEGIN EXECUTION NOW:
 """
         
         return instruction
