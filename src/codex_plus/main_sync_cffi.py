@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from curl_cffi import requests
 import logging
+import json as _json
 import json
 
 app = FastAPI()
@@ -27,6 +28,7 @@ UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Co
 logger.info("Initializing LLM execution middleware (instruction mode)")
 from .llm_execution_middleware import create_llm_execution_middleware
 slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
+from .hooks import process_pre_input_hooks, process_post_output_hooks
 
 @app.get("/health")
 async def health():
@@ -42,6 +44,21 @@ async def proxy(request: Request, path: str):
     
     # Read body for debug logging (preserve original behavior)
     body = await request.body()
+    # Apply pre-input hooks for JSON bodies on /responses
+    if body and path == "responses":
+        try:
+            body_dict = _json.loads(body)
+            modified = await process_pre_input_hooks(request, body_dict)
+            if modified != body_dict:
+                # stash modified body for downstream middleware
+                try:
+                    request.state.modified_body = _json.dumps(modified).encode('utf-8')
+                    logger.info("Pre-input hooks applied: request body modified")
+                except Exception as e:
+                    logger.debug(f"Unable to set modified_body on request.state: {e}")
+        except _json.JSONDecodeError:
+            logger.debug("Request body not JSON; skipping pre-input hooks")
+
     # Debug: Log request body to see system prompts
     logger.debug(f"Path: {path}, Body length: {len(body) if body else 0}")
     
@@ -82,4 +99,12 @@ async def proxy(request: Request, path: str):
     
     # Process request through slash command middleware
     # This will either handle slash commands or proxy normally
-    return await slash_middleware.process_request(request, path)
+    response = await slash_middleware.process_request(request, path)
+
+    # Apply post-output hooks only for non-streaming responses to avoid consuming streams
+    try:
+        if not isinstance(response, StreamingResponse):
+            response = await process_post_output_hooks(response)
+    except Exception as e:
+        logger.debug(f"post-output hooks failed: {e}")
+    return response
