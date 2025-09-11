@@ -246,12 +246,13 @@ else
 fi
  
 # Persist key metrics for later phases
-mkdir -p .codex_tmp
+BRANCH_NAME=$(git branch --show-current)
+mkdir -p "/tmp/$BRANCH_NAME"
 {
   echo "ORIGINAL_COUNT=$original_count"
   echo "REPLY_COUNT=$reply_count"
   echo "COVERAGE_STR=$coverage_str"
-} > .codex_tmp/copilot_state.env
+} > "/tmp/$BRANCH_NAME/copilot_state.env"
 ```
 
 ## 📤 Phase 7: Commit and Push
@@ -264,8 +265,9 @@ echo -e "\n📤 Committing and pushing changes..."
 if [ -n "$(git diff --stat 2>/dev/null)" ]; then
   git add -A
 
-  mkdir -p .codex_tmp
-  commit_msg=.codex_tmp/commit_message.txt
+  BRANCH_NAME=$(git branch --show-current)
+  mkdir -p "/tmp/$BRANCH_NAME"
+  commit_msg="/tmp/$BRANCH_NAME/commit_message.txt"
   {
     echo "fix: address PR #$pr_num review comments"
     echo
@@ -329,9 +331,9 @@ echo "🎯 Next steps: Review changes and merge when ready"
 # Also post a summary as an issue comment for auditability
 echo -e "\n📝 Posting coverage summary as issue comment..."
 tag=${tag:-"[AI Responder codex]"}
-if [ -f .codex_tmp/copilot_state.env ]; then
+if [ -f "/tmp/$BRANCH_NAME/copilot_state.env" ]; then
   # shellcheck disable=SC1090
-  . .codex_tmp/copilot_state.env
+  . "/tmp/$BRANCH_NAME/copilot_state.env"
 fi
 summary_body="$tag PR Comment Coverage Summary\n\n- Review comments: $review_count\n- Issue comments: $issue_count\n- Original comments: ${ORIGINAL_COUNT:-$original_count}\n- Replies posted: ${REPLY_COUNT:-$reply_count}\n- Coverage: ${COVERAGE_STR:-$coverage_str}\n- Duration: ${minutes}m ${seconds}s\n\n🤖 Automated by Codex Plus /copilot"
 gh api "repos/$owner/$repo/issues/$pr_num/comments" \
