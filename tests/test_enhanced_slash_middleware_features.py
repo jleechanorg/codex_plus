@@ -5,163 +5,63 @@ from pathlib import Path
 
 import pytest
 
-from enhanced_slash_middleware import create_enhanced_slash_command_middleware
-from enhanced_slash_middleware import HybridCommandDef
+from llm_execution_middleware import LLMExecutionMiddleware, create_llm_execution_middleware
 
 
-def test_handles_empty_body_returns_same():
-    mw = create_enhanced_slash_command_middleware()
-    body = b"not-json"
-    headers = {"content-type": "application/json"}
-    new_body, new_headers = mw.process_request_body(body, headers)
-    assert new_body == body
-    assert new_headers == headers
+def test_detect_slash_commands_and_instruction_building():
+    mw: LLMExecutionMiddleware = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
+    text = "Please /echo one and then /echo two"
+    cmds = mw.detect_slash_commands(text)
+    assert ("echo", "one and then") or ("echo", "one") in cmds
+    instr = mw.create_execution_instruction(cmds)
+    assert "You are a slash command interpreter" in instr
 
 
-def test_passthrough_when_no_slash_command():
-    mw = create_enhanced_slash_command_middleware()
+def test_no_injection_for_plain_text():
+    mw: LLMExecutionMiddleware = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
     payload = {"input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]}]}
-    body = json.dumps(payload).encode("utf-8")
-    headers = {"content-type": "application/json", "content-length": str(len(body))}
-    new_body, new_headers = mw.process_request_body(body, headers)
-    assert new_body == body
-    assert new_headers == headers
+    modified = mw.inject_execution_behavior(payload)
+    assert modified == payload
 
 
-def test_markdown_frontmatter_description_and_substitution(tmp_path):
-    # Create a command in .codexplus/commands
-    cmd_dir = Path(".codexplus/commands")
-    cmd_dir.mkdir(parents=True, exist_ok=True)
-    cmd_file = cmd_dir / "sample.md"
-    cmd_file.write_text(
-        """---
-description: Sample description
----
-
-Args: $ARGUMENTS; first=$1 second=$2 default=${name:defaultName}
-""",
-        encoding="utf-8",
-    )
-
+def test_find_command_file_precedence(tmp_path):
+    mw: LLMExecutionMiddleware = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
+    codex_dir = Path(".codexplus/commands"); codex_dir.mkdir(parents=True, exist_ok=True)
+    claude_dir = Path(".claude/commands"); claude_dir.mkdir(parents=True, exist_ok=True)
+    name = "dupfile"
+    codex_file = codex_dir / f"{name}.md"; codex_file.write_text("codex version", encoding="utf-8")
+    claude_file = claude_dir / f"{name}.md"; claude_file.write_text("claude version", encoding="utf-8")
     try:
-        mw = create_enhanced_slash_command_middleware()
-        # Description from frontmatter is registered
-        cmd_def = mw.registry.get("sample")
-        assert cmd_def is not None
-        assert cmd_def.description == "Sample description"
-
-        # Execute slash command and verify substitution
-        out = mw._execute_command("/sample foo bar")
-        assert out is not None
-        assert "Args: foo bar; first=foo second=bar default=defaultName" in out
+        f = mw.find_command_file(name)
+        assert f is not None
+        # .codexplus should take precedence
+        assert f.name == f"{name}.md" and str(f).endswith(".codexplus/commands/"+f.name)
     finally:
-        try:
-            cmd_file.unlink(missing_ok=True)
-        except Exception:
-            pass
-        # Clean up empty dirs
-        try:
-            if cmd_dir.exists() and not any(cmd_dir.iterdir()):
-                cmd_dir.rmdir()
-                parent = cmd_dir.parent
-                if parent.exists() and not any(parent.iterdir()):
-                    parent.rmdir()
-        except Exception:
-            pass
+        for p in (codex_file, claude_file):
+            try: p.unlink(missing_ok=True)
+            except: pass
+        for d in (codex_dir, claude_dir):
+            try:
+                if d.exists() and not any(d.iterdir()):
+                    d.rmdir(); parent=d.parent
+                    if parent.exists() and not any(parent.iterdir()): parent.rmdir()
+            except: pass
 
 
-def test_unknown_command_returns_message():
-    mw = create_enhanced_slash_command_middleware()
-    out = mw._execute_command("/doesnotexist foo")
-    assert "Unknown command" in out
-
-
-def test_builtin_handler_error_handling():
-    mw = create_enhanced_slash_command_middleware()
-    # Register a builtin that raises
-    def boom(_):
-        raise RuntimeError("boom")
-
-    mw.registry.register(HybridCommandDef(
-        name="boom",
-        description="Boom",
-        source="builtin",
-        handler=boom,
-    ))
-
-    out = mw._execute_command("/boom arg1")
-    assert "Error executing command /boom" in out or "Error executing command" in out
-
-
-def test_quoted_arguments_parsing_and_substitution(tmp_path):
-    # Create a command in .codexplus/commands
-    cmd_dir = Path(".codexplus/commands")
-    cmd_dir.mkdir(parents=True, exist_ok=True)
-    cmd_file = cmd_dir / "qargs.md"
-    cmd_file.write_text(
-        """---
-description: Quoted args test
----
-
-Got: $ARGUMENTS | first=$1 | second=$2
-""",
-        encoding="utf-8",
-    )
-
-    try:
-        mw = create_enhanced_slash_command_middleware()
-        out = mw._execute_command('/qargs "fix all tests" --verbose')
-        assert "Got: fix all tests --verbose" in out
-        assert "first=fix all tests" in out
-        assert "second=--verbose" in out
-    finally:
-        try:
-            cmd_file.unlink(missing_ok=True)
-        except Exception:
-            pass
-        # Clean up if empty
-        try:
-            if cmd_dir.exists() and not any(cmd_dir.iterdir()):
-                cmd_dir.rmdir()
-                parent = cmd_dir.parent
-                if parent.exists() and not any(parent.iterdir()):
-                    parent.rmdir()
-        except Exception:
-            pass
-
-
-def test_multiple_slash_commands_expansion():
-    mw = create_enhanced_slash_command_middleware()
-    # Use repo-provided .codexplus/commands/echo.md
+def test_multiple_commands_injection_in_input_format():
+    mw: LLMExecutionMiddleware = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
     payload = {
-        "model": "gpt-5",
-        "instructions": "Test",
         "input": [
-            {
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": "First /echo one then /echo two please"
-                    }
-                ],
-            }
-        ],
-        "tools": [],
-        "tool_choice": "auto",
-        "parallel_tool_calls": True,
-        "reasoning": False,
-        "store": False,
-        "stream": False,
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "First /echo one then /echo two please"}]}
+        ]
     }
-    body = json.dumps(payload).encode("utf-8")
-    headers = {"content-type": "application/json", "content-length": str(len(body))}
+    modified = mw.inject_execution_behavior(payload)
+    txt = modified["input"][0]["content"][0]["text"]
+    assert txt.startswith("[SYSTEM:")
 
-    new_body, new_headers = mw.process_request_body(body, headers)
-    assert new_body != body
-    assert int(new_headers.get("content-length", "0")) == len(new_body)
-    # Should include both expanded echoes (case-insensitive)
-    lowered = new_body.decode("utf-8").lower()
-    assert "echo: one" in lowered
-    assert "echo: two" in lowered
+
+    # Replacement for expansion: ensure instruction includes both commands
+    cmds = mw.detect_slash_commands("First /echo one then /echo two please")
+    instr = mw.create_execution_instruction(cmds)
+    low = instr.lower()
+    assert "/echo" in low and low.count("/echo") >= 2

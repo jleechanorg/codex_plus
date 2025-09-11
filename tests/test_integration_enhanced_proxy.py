@@ -30,16 +30,8 @@ def _make_payload(text: str) -> dict:
 
 
 def test_expanded_request_proxies_with_streaming(tmp_path):
-    # Create a simple command to trigger expansion
-    cmd_dir = Path(".codexplus/commands")
-    cmd_dir.mkdir(parents=True, exist_ok=True)
-    (cmd_dir / "echo.md").write_text("Echo: $ARGUMENTS\n", encoding="utf-8")
-
-    # Reload commands so the middleware picks up the newly created file
-    try:
-        slash_middleware._load_markdown_commands()  # type: ignore[attr-defined]
-    except Exception:
-        pass
+    # For LLM middleware, expansion isn't needed; it injects execution instruction.
+    # We only need the proxy to forward and stream the upstream response.
 
     client = TestClient(app)
 

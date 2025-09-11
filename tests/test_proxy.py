@@ -6,8 +6,19 @@ import json
 
 # Import the proxy app (to be created)
 from main import app
+from main_sync_cffi import slash_middleware
 
 client = TestClient(app)
+
+@pytest.fixture(autouse=True)
+def reset_llm_session():
+    # Ensure the LLM middleware recreates its session inside each test's patch context
+    try:
+        if hasattr(slash_middleware, "_session"):
+            delattr(slash_middleware, "_session")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    yield
 
 # Test Matrix 1: Core Request Interception
 class TestSimplePassthroughProxy:

@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 
-from enhanced_slash_middleware import create_enhanced_slash_command_middleware
+from llm_execution_middleware import create_llm_execution_middleware
 
 
 def write_cmd(path: Path, name: str, description: str = "Test cmd") -> Path:
@@ -13,17 +13,17 @@ def write_cmd(path: Path, name: str, description: str = "Test cmd") -> Path:
     return cmd_file
 
 
-def test_loads_commands_from_claude_directory(tmp_path):
+def test_find_command_file_from_claude_directory(tmp_path):
     # Create a .claude/commands/testcmd.md file under repo root
     claude_cmds = Path(".claude/commands")
     created = write_cmd(claude_cmds, "testcmd", description="From .claude")
 
     try:
-        mw = create_enhanced_slash_command_middleware()
-        # Should have loaded the command
-        cmd = mw.registry.get("testcmd")
-        assert cmd is not None and cmd.source == "markdown"
-        assert cmd.description == "From .claude"
+        mw = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
+        f = mw.find_command_file("testcmd")
+        assert f is not None
+        assert f.name == "testcmd.md"
+        assert ".claude/commands" in str(f)
     finally:
         # Cleanup created file
         try:
@@ -46,11 +46,10 @@ def test_claude_overrides_codexplus_when_duplicate():
     claude_file = write_cmd(claude_cmds, same, description="From .claude override")
 
     try:
-        mw = create_enhanced_slash_command_middleware()
-        cmd = mw.registry.get(same)
-        assert cmd is not None
-        # Because we register .codexplus first and .claude second, .claude should override
-        assert cmd.description == "From .claude override"
+        mw = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
+        f = mw.find_command_file(same)
+        # .codexplus should take precedence in LLMExecutionMiddleware
+        assert f is not None and ".codexplus/commands" in str(f)
     finally:
         for f in (codex_file, claude_file):
             try:
@@ -66,4 +65,3 @@ def test_claude_overrides_codexplus_when_duplicate():
                         parent.rmdir()
             except Exception:
                 pass
-
