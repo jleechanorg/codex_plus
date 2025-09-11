@@ -25,7 +25,7 @@ UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Co
 
 # Initialize slash command middleware
 logger.info("Initializing LLM execution middleware (instruction mode)")
-from llm_execution_middleware import create_llm_execution_middleware
+from .llm_execution_middleware import create_llm_execution_middleware
 slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
 
 @app.get("/health")

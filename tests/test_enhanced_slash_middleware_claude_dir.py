@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 
-from llm_execution_middleware import create_llm_execution_middleware
+from codex_plus.llm_execution_middleware import create_llm_execution_middleware
 
 
 def write_cmd(path: Path, name: str, description: str = "Test cmd") -> Path:

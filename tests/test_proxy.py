@@ -5,8 +5,8 @@ from unittest.mock import patch, Mock
 import json
 
 # Import the proxy app (to be created)
-from main import app
-from main_sync_cffi import slash_middleware
+from codex_plus.main import app
+from codex_plus.main_sync_cffi import slash_middleware
 
 client = TestClient(app)
 

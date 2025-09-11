@@ -5,7 +5,7 @@ Adapted tests for LLMExecutionMiddleware (replacing EnhancedSlashCommandMiddlewa
 import json
 import pytest
 
-from llm_execution_middleware import LLMExecutionMiddleware, create_llm_execution_middleware
+from codex_plus.llm_execution_middleware import LLMExecutionMiddleware, create_llm_execution_middleware
 
 
 def make_codex_cli_payload(text: str) -> bytes:
