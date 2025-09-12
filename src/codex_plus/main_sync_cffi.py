@@ -8,6 +8,7 @@ DO NOT replace with httpx, requests, or any other HTTP client
 Codex uses ChatGPT backend with session auth, NOT OpenAI API keys
 """
 from fastapi import FastAPI, Request
+from contextlib import asynccontextmanager
 from fastapi.responses import StreamingResponse, JSONResponse
 from curl_cffi import requests
 import logging
@@ -17,7 +18,26 @@ import sys
 import os
 import time
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        # Session start hooks
+        try:
+            from .hooks import settings_session_start
+            await settings_session_start(None, source="startup")
+        except Exception:
+            pass
+        yield
+    finally:
+        # Session end hooks
+        try:
+            from .hooks import settings_session_end
+            await settings_session_end(None, reason="exit")
+        except Exception:
+            pass
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Logger setup (must be defined before first use)
 logger = logging.getLogger("codex_plus_proxy")
@@ -34,8 +54,6 @@ slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
 from .hooks import (
     process_pre_input_hooks,
     process_post_output_hooks,
-    settings_session_start,
-    settings_session_end,
     settings_stop,
 )
 
@@ -123,22 +141,6 @@ class HookMiddleware:
 
 
 hook_middleware = HookMiddleware()
-
-@app.on_event("startup")
-async def _on_startup():
-    try:
-        await settings_session_start(None, source="startup")
-    except Exception:
-        pass
-
-
-@app.on_event("shutdown")
-async def _on_shutdown():
-    try:
-        await settings_session_end(None, reason="exit")
-    except Exception:
-        pass
-
 
 @app.get("/health")
 async def health():
