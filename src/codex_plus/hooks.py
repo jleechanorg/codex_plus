@@ -184,17 +184,19 @@ class HookSystem:
             logger.error(f"No Python code found in {file_path}")
             return None
         
-        # Create a temporary module and execute the Python code
-        spec = importlib.util.spec_from_loader(file_path.stem, loader=None)
-        if not spec:
-            logger.error(f"Could not create module spec for {file_path}")
-            return None
-            
-        module = importlib.util.module_from_spec(spec)
+        # Create a module using importlib without mutating sys.path
         try:
-            exec(python_code, module.__dict__)
+            module_name = f"codex_plus_hook_{file_path.stem}"
+            # Create a bare module spec and set __file__ for better import semantics inside hook code
+            spec = importlib.util.spec_from_loader(module_name, loader=None)
+            module = importlib.util.module_from_spec(spec)
+            module.__file__ = str(file_path)
+            # Compile with the actual file path for accurate tracebacks
+            code_obj = compile(python_code, str(file_path), 'exec')
+            exec(code_obj, module.__dict__)
         except Exception as e:
-            logger.error(f"Error executing Python code in {file_path}: {e}")
+            logger.error(f"Error loading hook module from {file_path}: {e}")
+            logger.debug(traceback.format_exc())
             return None
         
         # Find a subclass of Hook defined in the module (excluding base Hook)
