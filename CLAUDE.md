@@ -188,6 +188,26 @@ curl -v http://localhost:3000/health
 - MCP tools integration matches Claude Code CLI behavior patterns
 - Hook system designed for Claude Code CLI workflow compatibility
 
+### Hooks Lifecycle (Anthropic-Aligned)
+- Events supported: UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop, PreCompact, SessionStart, SessionEnd
+- Sources: `.codexplus/settings.json` (project first), `.claude/settings.json` (fallback)
+- Format (per Anthropic docs):
+  {
+    "hooks": {
+      "EventName": [
+        { "matcher": "ToolPattern", "hooks": [ { "type": "command", "command": "...", "timeout": 5 } ] }
+      ]
+    }
+  }
+- Execution: commands receive JSON on stdin; exit 2 blocks; stdout JSON may include additionalContext or feedback
+- Python .py hooks with YAML frontmatter still work for `pre-input`/`post-output` using `Hook` subclasses
+
+### Implementation Details
+- No external scripts in the request path; a lightweight middleware prints git status line
+- Settings-driven hooks are executed around `/responses` and detected slash commands
+- Session start/end hooks are fired via FastAPI lifespan handlers
+- Import safety: we do not mutate `sys.path` when loading hooks; .py hooks import `codex_plus.hooks` directly
+
 ### Environment Variables
 ```bash
 export OPENAI_BASE_URL=http://localhost:3000  # Route Codex through proxy

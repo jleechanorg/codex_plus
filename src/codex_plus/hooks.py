@@ -83,10 +83,7 @@ class HookSystem:
                 logger.info(f"Hooks directory {hooks_dir} does not exist")
                 continue
             
-            # Add hooks directory to Python path
-            hooks_path = str(hooks_dir.absolute())
-            if hooks_path not in sys.path:
-                sys.path.insert(0, hooks_path)
+            # Avoid mutating sys.path; hook files can import codex_plus modules directly
             
             for hook_file in hooks_dir.glob("*.py"):
                 # Skip if hook with same name already loaded (precedence)
