@@ -1,0 +1,9 @@
+{
+  "hooks": {},
+  "statusLine": {
+    "type": "command",
+    "command": "$CLAUDE_PROJECT_DIR/.codexplus/hooks/git-header-status-only.sh",
+    "timeout": 3
+  }
+}
+
