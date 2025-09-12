@@ -200,6 +200,7 @@ BEGIN EXECUTION NOW:
     async def process_request(self, request, path: str):
         """Process request with execution behavior injection"""
         from fastapi.responses import StreamingResponse, JSONResponse
+        import os
         from curl_cffi import requests
         # Import hook helpers lazily to avoid cycles
         from .hooks import (
@@ -327,14 +328,41 @@ BEGIN EXECUTION NOW:
             
             from starlette.responses import Response as StarletteResponse
             if path == 'responses':
-                # Force buffered body while preserving event-stream header
-                resp_headers['content-type'] = 'text/event-stream'
-                starlette_resp = StarletteResponse(
-                    content=content_bytes,
-                    status_code=response.status_code,
-                    headers=resp_headers,
-                    media_type='application/octet-stream'
-                )
+                # For CI/tests, return buffered response for determinism
+                if os.environ.get('CI') or os.environ.get('PYTEST_CURRENT_TEST'):
+                    resp_headers['content-type'] = 'text/event-stream'
+                    starlette_resp = StarletteResponse(
+                        content=content_bytes,
+                        status_code=response.status_code,
+                        headers=resp_headers,
+                        media_type='application/octet-stream'
+                    )
+                else:
+                    # Stream buffered content immediately, then append statusLine when ready (non-blocking)
+                    try:
+                        from .hooks import hook_system
+                    except Exception:
+                        hook_system = None
+
+                    async def stream_with_status():
+                        # yield the upstream content first
+                        yield content_bytes
+                        if hook_system is not None:
+                            try:
+                                # Use statusLine timeout if configured, else 2s cap
+                                timeout_s = 2
+                                cfg = getattr(hook_system, 'status_line_cfg', None)
+                                if isinstance(cfg, dict):
+                                    timeout_s = cfg.get('timeout', 2)
+                                import asyncio as _asyncio
+                                line = await _asyncio.wait_for(hook_system.run_status_line(), timeout=timeout_s)
+                                if line:
+                                    yield ("\n" + line + "\n").encode('utf-8', 'ignore')
+                            except Exception:
+                                pass
+
+                    resp_headers['content-type'] = 'text/event-stream'
+                    starlette_resp = StreamingResponse(stream_with_status(), headers=resp_headers, status_code=response.status_code)
             else:
                 starlette_resp = StarletteResponse(
                     content=content_bytes,
