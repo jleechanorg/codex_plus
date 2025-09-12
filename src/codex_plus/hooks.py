@@ -69,6 +69,7 @@ class HookSystem:
         self.hooks: List[Hook] = []
         # Settings-based hooks loaded from JSON settings files
         self.settings_hooks: Dict[str, List[Dict[str, Any]]] = {}
+        self.status_line_cfg: Optional[Dict[str, Any]] = None
         self.session_id: str = os.environ.get("CODEX_PLUS_SESSION_ID", "local-session")
         self._load_hooks()
         self._load_settings_hooks()
@@ -111,6 +112,7 @@ class HookSystem:
         Merge arrays per event. .codexplus settings take precedence by ordering (first).
         """
         self.settings_hooks = {}
+        self.status_line_cfg = None
 
         def read_settings(p: Path) -> Dict[str, Any]:
             try:
@@ -159,8 +161,43 @@ class HookSystem:
                             "command": cmd,
                             "timeout": timeout,
                         })
+            # Optional statusLine block (first wins by precedence)
+            if self.status_line_cfg is None:
+                sl = cfg.get("statusLine")
+                if isinstance(sl, dict) and sl.get("type") == "command" and sl.get("command"):
+                    self.status_line_cfg = {
+                        "command": sl.get("command"),
+                        "timeout": sl.get("timeout", 2),
+                        "mode": sl.get("appendMode") or sl.get("mode"),
+                    }
         if self.settings_hooks:
             logger.info(f"Loaded settings hooks for events: {sorted(self.settings_hooks.keys())}")
+
+    async def run_status_line(self) -> Optional[str]:
+        """Run statusLine command from settings and return a short line for SSE."""
+        cfg = self.status_line_cfg
+        if not cfg:
+            return None
+        payload = {
+            "session_id": self.session_id,
+            "hook_event_name": "StatusLine",
+            "cwd": os.getcwd(),
+        }
+        code, out, err, _ = self._run_command_hook(cfg["command"], payload, cfg.get("timeout", 2))
+        text = (out or err or "").strip()
+        if not text:
+            return None
+        first = text.splitlines()[0]
+        return first[:512]
+
+    def status_line_mode(self) -> Optional[str]:
+        cfg = self.status_line_cfg
+        if not cfg:
+            return None
+        mode = cfg.get("mode")
+        if isinstance(mode, str):
+            return mode.lower()
+        return None
     
     def _load_hook_from_file(self, file_path: Path) -> Optional[Hook]:
         """Load a single hook from a Python file"""
@@ -296,7 +333,11 @@ class HookSystem:
             return matcher == tool_name
 
     def _run_command_hook(self, cmd: str, payload: Dict[str, Any], timeout: Union[int, float]) -> Tuple[int, str, str, Optional[Dict[str, Any]]]:
-        """Run a single command hook with JSON stdin. Return (exit_code, stdout, stderr, parsed_json)."""
+        """Run a single command hook with JSON stdin. Return (exit_code, stdout, stderr, parsed_json).
+
+        Follows Claude Code format: a settings hook's command may reference a script in
+        .codexplus/hooks or .claude/hooks by basename. We resolve and pick interpreter.
+        """
         import subprocess, json, shlex, os as _os
         try:
             # Best-effort project dir discovery for CLAUDE_PROJECT_DIR
@@ -309,21 +350,55 @@ class HookSystem:
                     project_dir = git_root
             except Exception:
                 pass
+
             env = os.environ.copy()
             env.setdefault("CLAUDE_PROJECT_DIR", project_dir)
-            # Expand project variable and environment vars in command string
+
+            # Expand env and project vars, then split
             cmd_str = str(cmd)
             cmd_str = cmd_str.replace("$CLAUDE_PROJECT_DIR", project_dir).replace("${CLAUDE_PROJECT_DIR}", project_dir)
-            cmd_expanded = cmd if isinstance(cmd, list) else shlex.split(_os.path.expandvars(cmd_str))
+            parts = cmd if isinstance(cmd, list) else shlex.split(_os.path.expandvars(cmd_str))
+            if not parts:
+                return 1, "", "Empty command", None
+
+            exec0 = parts[0]
+            exec_path = None
+
+            # Resolve bare executable names to known hooks directories
+            if not _os.path.isabs(exec0) and _os.sep not in exec0:
+                candidate_dirs = [
+                    _os.path.join(project_dir, ".codexplus", "hooks"),
+                    _os.path.join(project_dir, ".claude", "hooks"),
+                ]
+                for d in candidate_dirs:
+                    p = _os.path.join(d, exec0)
+                    if _os.path.isfile(p):
+                        exec_path = p
+                        break
+            else:
+                exec_path = exec0
+
+            # Determine interpreter if needed
+            if exec_path:
+                # Replace first token with resolved path
+                parts[0] = exec_path
+                is_exe = _os.access(exec_path, _os.X_OK)
+                if exec_path.endswith(".py") and not is_exe:
+                    parts = ["python3", exec_path] + parts[1:]
+                elif exec_path.endswith(".sh") and not is_exe:
+                    parts = ["bash", exec_path] + parts[1:]
+
+            # Run
             proc = subprocess.run(
-                cmd_expanded,
+                parts,
                 input=json.dumps(payload),
                 text=True,
                 capture_output=True,
                 timeout=timeout,
-                cwd=os.getcwd(),
+                cwd=project_dir,
                 env=env,
             )
+
             parsed = None
             if proc.stdout:
                 try:
