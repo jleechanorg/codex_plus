@@ -31,7 +31,114 @@ UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Co
 logger.info("Initializing LLM execution middleware (instruction mode)")
 from .llm_execution_middleware import create_llm_execution_middleware
 slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
-from .hooks import process_pre_input_hooks, process_post_output_hooks
+from .hooks import (
+    process_pre_input_hooks,
+    process_post_output_hooks,
+    settings_session_start,
+    settings_session_end,
+    settings_stop,
+)
+
+
+class HookMiddleware:
+    """Lightweight middleware to run hook-like side effects around responses.
+
+    This avoids invoking external scripts directly and computes any needed
+    status lines using Python and standard git commands.
+    """
+
+    def __init__(self, enable_git_status: bool = True):
+        self.enable_git_status = enable_git_status
+
+    async def emit_status_line(self) -> None:
+        if not self.enable_git_status:
+            return
+        import asyncio
+        import subprocess
+        import sys as _sys
+        try:
+            # Detect git root and branch
+            git_root = subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            local_branch = subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            # Upstream and ahead/behind
+            try:
+                upstream = subprocess.check_output(
+                    ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                ).strip()
+            except subprocess.CalledProcessError:
+                upstream = "no upstream"
+
+            local_status = ""
+            if upstream != "no upstream":
+                try:
+                    ahead = int(
+                        subprocess.check_output(
+                            ["git", "rev-list", "--count", f"{upstream}..HEAD"],
+                            text=True,
+                            stderr=subprocess.DEVNULL,
+                        ).strip()
+                    )
+                except Exception:
+                    ahead = 0
+                try:
+                    behind = int(
+                        subprocess.check_output(
+                            ["git", "rev-list", "--count", f"HEAD..{upstream}"],
+                            text=True,
+                            stderr=subprocess.DEVNULL,
+                        ).strip()
+                    )
+                except Exception:
+                    behind = 0
+                if ahead == 0 and behind == 0:
+                    local_status = " (synced)"
+                elif ahead > 0 and behind == 0:
+                    local_status = f" (ahead {ahead})"
+                elif ahead == 0 and behind > 0:
+                    local_status = f" (behind {behind})"
+                else:
+                    local_status = f" (diverged +{ahead} -{behind})"
+            else:
+                local_status = " (no remote)"
+
+            repo_name = git_root.rstrip("/\\").split("/")[-1]
+            header = f"[Dir: {repo_name} | Local: {local_branch}{local_status} | Remote: {upstream} | PR: none]"
+            logger.info("🎯 Git Status Line:")
+            logger.info(f"   {header}")
+            # Write transient status line to terminal
+            print(f"\r{header}", file=_sys.stderr, flush=True)
+        except Exception:
+            # Best-effort only; never block or raise
+            pass
+
+
+hook_middleware = HookMiddleware()
+
+@app.on_event("startup")
+async def _on_startup():
+    try:
+        await settings_session_start(None, source="startup")
+    except Exception:
+        pass
+
+
+@app.on_event("shutdown")
+async def _on_shutdown():
+    try:
+        await settings_session_end(None, reason="exit")
+    except Exception:
+        pass
+
 
 @app.get("/health")
 async def health():
@@ -59,6 +166,10 @@ async def proxy(request: Request, path: str):
                     logger.info("Pre-input hooks applied: request body modified")
                 except Exception as e:
                     logger.debug(f"Unable to set modified_body on request.state: {e}")
+            # If any settings hooks blocked the prompt, short-circuit
+            if getattr(request.state, 'user_prompt_block', None):
+                reason = request.state.user_prompt_block.get('reason', 'Blocked by hook')
+                return JSONResponse({"error": reason}, status_code=400)
         except _json.JSONDecodeError:
             logger.debug("Request body not JSON; skipping pre-input hooks")
 
@@ -111,62 +222,13 @@ async def proxy(request: Request, path: str):
     except Exception as e:
         logger.debug(f"post-output hooks failed: {e}")
     
-    # Execute git header hook and potentially modify response
+    # Run hook middleware side-effects (non-blocking)
     import asyncio
-    
-    # Option 1: Add git status to streaming response (requires response modification)
-    # Option 2: Add git status as a separate message after main response
-    # Option 3: Terminal status line simulation via ANSI escape codes
-    
-    async def run_git_header_async():
-        start_time = time.time()
-        try:
-            import subprocess
-            from pathlib import Path
-            
-            git_root = subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"], 
-                text=True, 
-                stderr=subprocess.DEVNULL
-            ).strip()
-            
-            git_header_script = Path(git_root) / ".claude/hooks/git-header.sh"
-            
-            if git_header_script.exists() and git_header_script.is_file():
-                logger.info("🔍 Executing git header script (async)...")
-                result = subprocess.run(
-                    [str(git_header_script), "--status-only"],  # Use minimal output
-                    capture_output=True,
-                    text=True,
-                    timeout=5  # Reduced from 45 to 5 seconds
-                )
-                
-                if result.stdout.strip():
-                    # Extract just the colored status line (last line typically)
-                    lines = result.stdout.strip().split('\n')
-                    status_line = None
-                    for line in reversed(lines):
-                        if '[' in line and ']' in line:  # Find colored status line
-                            status_line = line.strip()
-                            break
-                    
-                    if status_line:
-                        execution_time = time.time() - start_time
-                        logger.info("🎯 Git Status Line:")
-                        logger.info(f"   {status_line}")
-                        logger.info(f"🕐 Git header took {execution_time:.2f}s")
-                        
-                        # Print to stderr so it appears in terminal
-                        print(f"\r{status_line}", file=sys.stderr, flush=True)
-                        
-        except subprocess.TimeoutExpired:
-            execution_time = time.time() - start_time
-            logger.info(f"⚠️ Git header timed out after {execution_time:.2f}s")
-        except Exception as e:
-            execution_time = time.time() - start_time
-            logger.info(f"⚠️ Git header failed after {execution_time:.2f}s: {e}")
-    
-    # Start git header task asynchronously (fire and forget)
-    asyncio.create_task(run_git_header_async())
+    asyncio.create_task(hook_middleware.emit_status_line())
+    # Also trigger Stop settings hooks (best-effort)
+    try:
+        asyncio.create_task(settings_stop(request, {"transcript_path": ""}))
+    except Exception:
+        pass
     
     return response
