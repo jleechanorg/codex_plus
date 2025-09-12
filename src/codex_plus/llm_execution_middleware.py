@@ -201,6 +201,11 @@ BEGIN EXECUTION NOW:
         """Process request with execution behavior injection"""
         from fastapi.responses import StreamingResponse, JSONResponse
         from curl_cffi import requests
+        # Import hook helpers lazily to avoid cycles
+        from .hooks import (
+            settings_pre_tool_use,
+            settings_post_tool_use,
+        )
         
         body = await request.body()
         # Respect pre-input hooks if a modified body was provided
@@ -218,6 +223,37 @@ BEGIN EXECUTION NOW:
             try:
                 # Parse and potentially modify the request
                 data = json.loads(body)
+
+                # Detect slash commands for hook gating
+                commands: List[Tuple[str, str]] = []
+                if "input" in data:
+                    for item in data["input"]:
+                        if isinstance(item, dict) and item.get("type") == "message":
+                            for content_item in (item.get("content", []) or []):
+                                if isinstance(content_item, dict) and content_item.get("type") == "input_text":
+                                    text = content_item.get("text", "")
+                                    detected = self.detect_slash_commands(text)
+                                    if detected:
+                                        commands.extend(detected)
+                elif "messages" in data:
+                    for message in data["messages"]:
+                        if message.get("role") == "user" and "content" in message:
+                            text = message.get("content")
+                            detected = self.detect_slash_commands(text)
+                            if detected:
+                                commands.extend(detected)
+
+                # Run settings PreToolUse hooks against detected commands
+                if commands:
+                    for cmd_name, cmd_args in commands:
+                        tool_name = f"SlashCommand/{cmd_name}"
+                        tool_args = {"args": cmd_args}
+                        _args, block = await settings_pre_tool_use(request, tool_name, tool_args)
+                        if block:
+                            reason = block.get("reason", "Blocked by hook")
+                            return JSONResponse({"error": reason}, status_code=400)
+
+                # Inject execution behavior once pre-hooks allow
                 modified_data = self.inject_execution_behavior(data)
                 
                 # Convert back to JSON
@@ -293,18 +329,39 @@ BEGIN EXECUTION NOW:
             if path == 'responses':
                 # Force buffered body while preserving event-stream header
                 resp_headers['content-type'] = 'text/event-stream'
-                return StarletteResponse(
+                starlette_resp = StarletteResponse(
                     content=content_bytes,
                     status_code=response.status_code,
                     headers=resp_headers,
                     media_type='application/octet-stream'
                 )
-            return StarletteResponse(
-                content=content_bytes,
-                status_code=response.status_code,
-                headers=resp_headers,
-                media_type=media_type or "application/octet-stream"
-            )
+            else:
+                starlette_resp = StarletteResponse(
+                    content=content_bytes,
+                    status_code=response.status_code,
+                    headers=resp_headers,
+                    media_type=media_type or "application/octet-stream"
+                )
+
+            # Run settings PostToolUse hooks if we saw commands
+            try:
+                if 'commands' not in locals():
+                    commands = []
+                if commands:
+                    tool_response = {
+                        "status_code": response.status_code,
+                        "headers": dict(response.headers),
+                    }
+                    for cmd_name, cmd_args in commands:
+                        tool_name = f"SlashCommand/{cmd_name}"
+                        tool_args = {"args": cmd_args}
+                        feedback = await settings_post_tool_use(request, tool_name, tool_args, tool_response)
+                        if feedback:
+                            logger.info(f"PostToolUse feedback for {tool_name}: {feedback}")
+            except Exception as e:
+                logger.debug(f"PostToolUse hooks error: {e}")
+
+            return starlette_resp
             
         except Exception as e:
             logger.error(f"Proxy request failed: {e}")
