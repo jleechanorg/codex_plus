@@ -208,6 +208,8 @@ BEGIN EXECUTION NOW:
         )
         
         body = await request.body()
+        # Initialize headers early so we can safely update content-length
+        headers = dict(request.headers)
         # Respect pre-input hooks if a modified body was provided
         try:
             if hasattr(request, 'state') and getattr(request.state, 'modified_body', None):
@@ -216,7 +218,6 @@ BEGIN EXECUTION NOW:
                 logger.info("Using body from pre-input hooks")
         except Exception as e:
             logger.debug(f"Unable to read modified_body from request.state: {e}")
-        headers = dict(request.headers)
         
         # Only process if we have a JSON body
         if body:
