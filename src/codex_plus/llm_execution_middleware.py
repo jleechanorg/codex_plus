@@ -290,9 +290,8 @@ BEGIN EXECUTION NOW:
         
         try:
             # Use synchronous curl_cffi with Chrome impersonation
-            if not hasattr(self, '_session'):
-                self._session = requests.Session(impersonate="chrome124")
-            session = self._session
+            # Avoid caching to keep tests deterministic with patching
+            session = requests.Session(impersonate="chrome124")
             
             # Make the request with streaming
             response = session.request(
