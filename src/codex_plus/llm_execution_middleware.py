@@ -330,6 +330,26 @@ BEGIN EXECUTION NOW:
             if path == 'responses':
                 # For CI/tests, return buffered response for determinism
                 if os.environ.get('CI') or os.environ.get('PYTEST_CURRENT_TEST'):
+                    # Try to inject statusLine before [DONE]
+                    try:
+                        from .hooks import hook_system
+                    except Exception:
+                        hook_system = None
+                    if hook_system is not None:
+                        try:
+                            line = await hook_system.run_status_line()
+                            if line:
+                                injected = f"data: {line}\n\n".encode('utf-8', 'ignore')
+                                sentinel = b"data: [DONE]"
+                                idx = content_bytes.rfind(sentinel)
+                                if idx != -1:
+                                    before = content_bytes[:idx]
+                                    after = content_bytes[idx:]
+                                    content_bytes = before + injected + after
+                                else:
+                                    content_bytes += injected
+                        except Exception:
+                            pass
                     resp_headers['content-type'] = 'text/event-stream'
                     starlette_resp = StarletteResponse(
                         content=content_bytes,
@@ -338,28 +358,41 @@ BEGIN EXECUTION NOW:
                         media_type='application/octet-stream'
                     )
                 else:
-                    # Stream buffered content immediately, then append statusLine when ready (non-blocking)
+                    # Stream buffered content, but inject statusLine before [DONE] if possible
                     try:
                         from .hooks import hook_system
                     except Exception:
                         hook_system = None
 
                     async def stream_with_status():
-                        # yield the upstream content first
-                        yield content_bytes
+                        data = content_bytes
+                        injected = b""
                         if hook_system is not None:
                             try:
-                                # Use statusLine timeout if configured, else 2s cap
-                                timeout_s = 2
+                                # Use configured timeout or 10s default
+                                timeout_s = 10
                                 cfg = getattr(hook_system, 'status_line_cfg', None)
                                 if isinstance(cfg, dict):
-                                    timeout_s = cfg.get('timeout', 2)
+                                    timeout_s = cfg.get('timeout', 10)
                                 import asyncio as _asyncio
                                 line = await _asyncio.wait_for(hook_system.run_status_line(), timeout=timeout_s)
                                 if line:
-                                    yield ("\n" + line + "\n").encode('utf-8', 'ignore')
+                                    injected = f"data: {line}\n\n".encode('utf-8', 'ignore')
                             except Exception:
-                                pass
+                                injected = b""
+                        if injected:
+                            sentinel = b"data: [DONE]"
+                            idx = data.rfind(sentinel)
+                            if idx != -1:
+                                before = data[:idx]
+                                after = data[idx:]
+                                yield before + injected + after
+                                return
+                            else:
+                                yield data + injected
+                                return
+                        # Fallback: yield original data
+                        yield data
 
                     resp_headers['content-type'] = 'text/event-stream'
                     starlette_resp = StreamingResponse(stream_with_status(), headers=resp_headers, status_code=response.status_code)

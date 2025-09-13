@@ -185,10 +185,55 @@ class HookSystem:
         }
         code, out, err, _ = self._run_command_hook(cfg["command"], payload, cfg.get("timeout", 2))
         text = (out or err or "").strip()
-        if not text:
-            return None
-        first = text.splitlines()[0]
-        return first[:512]
+        if not text or text.lower().startswith('hook timed out'):
+            # Fallback: compute a minimal header via git
+            try:
+                import subprocess as _sp
+                root = _sp.check_output(["git","rev-parse","--show-toplevel"], text=True).strip()
+                repo = root.rsplit("/",1)[-1] if root else "repo"
+                br = _sp.check_output(["git","branch","--show-current"], text=True).strip()
+                try:
+                    up = _sp.check_output(["git","rev-parse","--abbrev-ref","--symbolic-full-name","@{u}"], text=True, stderr=_sp.DEVNULL).strip()
+                except Exception:
+                    up = "no upstream"
+                a = b = 0
+                if up != "no upstream":
+                    try:
+                        a = int(_sp.check_output(["git","rev-list","--count", f"{up}..HEAD"], text=True, stderr=_sp.DEVNULL).strip())
+                    except Exception:
+                        a = 0
+                    try:
+                        b = int(_sp.check_output(["git","rev-list","--count", f"HEAD..{up}"], text=True, stderr=_sp.DEVNULL).strip())
+                    except Exception:
+                        b = 0
+                status = ""
+                if up == "no upstream":
+                    status = " (no remote)"
+                elif a == 0 and b == 0:
+                    status = " (synced)"
+                elif a > 0 and b == 0:
+                    status = f" (ahead {a})"
+                elif a == 0 and b > 0:
+                    status = f" (behind {b})"
+                else:
+                    status = f" (diverged +{a} -{b})"
+                return f"[Dir: {repo} | Local: {br}{status} | Remote: {up} | PR: none]"
+            except Exception:
+                return None
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        # Prefer a bracketed header with Dir/Local/Remote if present
+        preferred = None
+        for ln in lines:
+            raw = ln.strip()
+            # Strip ANSI for matching
+            import re as _re
+            raw_nocol = _re.sub(r"\x1b\[[0-9;]*m", "", raw)
+            if raw_nocol.startswith("[") and ("Dir:" in raw_nocol) and ("Local:" in raw_nocol):
+                preferred = raw
+                break
+        if not preferred:
+            preferred = lines[0]
+        return preferred[:512]
 
     def status_line_mode(self) -> Optional[str]:
         cfg = self.status_line_cfg
