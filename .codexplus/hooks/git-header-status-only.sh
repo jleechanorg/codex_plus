@@ -37,13 +37,14 @@ else
   STATUS=" (diverged +$A -$B)"
 fi
 
-# PR lookup via gh (best-effort, quick)
+# PR lookup via gh (best-effort, quick) — avoid jq requirement by using gh --jq
 PR_SEG="none"
 if command -v gh >/dev/null 2>&1; then
-  PR_LINE=$(gh pr list --head "$BR" --json number,url 2>/dev/null | jq -r '.[0] | select(.) | "#\(.number) \(.url)"') || PR_LINE=""
+  PR_LINE=$(gh pr list --head "$BR" --json number,url --jq '.[0] | select(.) | "#\(.number) \(.url)"' 2>/dev/null || echo "")
   if [ -n "$PR_LINE" ]; then PR_SEG="$PR_LINE"; fi
 fi
 
+# Print header (with minimal color if supported)
 printf "%b[Dir: %s | Local: %s%s | Remote: %s | PR: %s]%b\n" \
   "$color_cyan" "$REPO" "$BR" "$STATUS" "$UP" "$PR_SEG" "$color_reset"
 
