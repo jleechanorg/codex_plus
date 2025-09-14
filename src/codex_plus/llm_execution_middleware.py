@@ -39,13 +39,14 @@ class LLMExecutionMiddleware:
         """Detect slash commands in text and return (command, args) tuples"""
         commands = []
         # Match commands at start of line or after whitespace
-        pattern = r'(?:^|\s)/([A-Za-z0-9_-]+)(?:\s+([^\n/]*))?'
-        
-        for match in re.finditer(pattern, text):
+        # Use non-greedy matching to stop at next slash command or newline
+        pattern = r'(?:^|\s)/([A-Za-z0-9_-]+)(?:\s+(.*?)(?=\s/|$))?'
+
+        for match in re.finditer(pattern, text, re.DOTALL):
             command = match.group(1)
             args = match.group(2) or ""
             commands.append((command, args.strip()))
-            
+
         return commands
     
     def find_command_file(self, command_name: str) -> Optional[Path]:
@@ -114,8 +115,8 @@ Available slash commands and their behaviors:
                         preview = ''.join(lines).strip()
                         if preview:
                             instruction += f"\n  - Preview: {preview[:100]}..."
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to read command file preview for {command_file}: {e}")
             else:
                 # Generic instruction for unknown commands
                 instruction += f"\n/{command_name}:"
