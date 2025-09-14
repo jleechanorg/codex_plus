@@ -161,17 +161,37 @@ class HookSystem:
                             "command": cmd,
                             "timeout": timeout,
                         })
-            # Optional statusLine block (first wins by precedence)
-            if self.status_line_cfg is None:
-                sl = cfg.get("statusLine")
-                if isinstance(sl, dict) and sl.get("type") == "command" and sl.get("command"):
-                    self.status_line_cfg = {
-                        "command": sl.get("command"),
-                        "timeout": sl.get("timeout", 2),
-                        "mode": sl.get("appendMode") or sl.get("mode"),
-                    }
         if self.settings_hooks:
             logger.info(f"Loaded settings hooks for events: {sorted(self.settings_hooks.keys())}")
+
+        # Determine statusLine with explicit precedence: .codexplus overrides .claude
+        try:
+            import json as _json
+            codex_p = Path('.codexplus/settings.json')
+            claude_p = Path('.claude/settings.json')
+            sl_codex = None
+            sl_claude = None
+            if codex_p.exists():
+                cfgc = _json.loads(codex_p.read_text(encoding='utf-8'))
+                sl = cfgc.get('statusLine')
+                if isinstance(sl, dict) and sl.get('type') == 'command' and sl.get('command'):
+                    sl_codex = {
+                        'command': sl.get('command'),
+                        'timeout': sl.get('timeout', 2),
+                        'mode': sl.get('mode') or sl.get('appendMode'),
+                    }
+            if claude_p.exists():
+                cfgc = _json.loads(claude_p.read_text(encoding='utf-8'))
+                sl = cfgc.get('statusLine')
+                if isinstance(sl, dict) and sl.get('type') == 'command' and sl.get('command'):
+                    sl_claude = {
+                        'command': sl.get('command'),
+                        'timeout': sl.get('timeout', 2),
+                        'mode': sl.get('mode') or sl.get('appendMode'),
+                    }
+            self.status_line_cfg = sl_codex or sl_claude
+        except Exception:
+            pass
 
     async def run_status_line(self) -> Optional[str]:
         """Run statusLine command from settings and return a short line for SSE."""
