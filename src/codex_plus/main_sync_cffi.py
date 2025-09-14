@@ -25,16 +25,16 @@ async def lifespan(app: FastAPI):
         try:
             from .hooks import settings_session_start
             await settings_session_start(None, source="startup")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to execute session start hooks: {e}")
         yield
     finally:
         # Session end hooks
         try:
             from .hooks import settings_session_end
             await settings_session_end(None, reason="exit")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to execute session end hooks: {e}")
 
 
 app = FastAPI(lifespan=lifespan)

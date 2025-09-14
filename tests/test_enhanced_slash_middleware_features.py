@@ -38,14 +38,21 @@ def test_find_command_file_precedence(tmp_path):
         assert f.name == f"{name}.md" and str(f).endswith(".codexplus/commands/"+f.name)
     finally:
         for p in (codex_file, claude_file):
-            try: p.unlink(missing_ok=True)
-            except: pass
+            try:
+                p.unlink(missing_ok=True)
+            except Exception as e:
+                # Log cleanup errors but don't fail tests
+                print(f"Warning: Could not remove test file {p}: {e}")
         for d in (codex_dir, claude_dir):
             try:
                 if d.exists() and not any(d.iterdir()):
-                    d.rmdir(); parent=d.parent
-                    if parent.exists() and not any(parent.iterdir()): parent.rmdir()
-            except: pass
+                    d.rmdir()
+                    parent = d.parent
+                    if parent.exists() and not any(parent.iterdir()):
+                        parent.rmdir()
+            except Exception as e:
+                # Log cleanup errors but don't fail tests
+                print(f"Warning: Could not remove test directory {d}: {e}")
 
 
 def test_multiple_commands_injection_in_input_format():

@@ -21,12 +21,12 @@ class Hook:
         
     async def pre_input(self, prompt: str, request: Request) -> str:
         """Modify user prompt before sending to API"""
-        # This would be implemented in actual hook files
+        # Base implementation - subclasses should override
         return prompt
     
     async def post_output(self, response: Dict[str, Any], request: Request) -> Dict[str, Any]:
         """Process API response after receiving"""
-        # This would be implemented in actual hook files
+        # Base implementation - subclasses should override
         return response
 
 class HookSystem:
@@ -60,9 +60,10 @@ class HookSystem:
                 elif hook_config.get('type') == 'post-output':
                     self.post_output_hooks.append(hook)
                     
-            except Exception:
-                # In real implementation, log the error
-                pass
+            except Exception as e:
+                # Log the error and continue with other hooks
+                print(f"Failed to load hook {file_path}: {e}")
+                continue
         
         # Sort by priority
         self.pre_input_hooks.sort(key=lambda h: h.priority)
@@ -89,9 +90,10 @@ class HookSystem:
             if hook.enabled:
                 try:
                     modified_prompt = await hook.pre_input(modified_prompt, request)
-                except Exception:
-                    # In real implementation, log error and continue
-                    pass
+                except Exception as e:
+                    # Log hook execution error and continue
+                    print(f"Pre-input hook {hook.name} failed: {e}")
+                    continue
         return modified_prompt
     
     async def execute_post_output_hooks(self, response: Dict[str, Any], request: Request) -> Dict[str, Any]:
@@ -101,9 +103,10 @@ class HookSystem:
             if hook.enabled:
                 try:
                     modified_response = await hook.post_output(modified_response, request)
-                except Exception:
-                    # In real implementation, log error and continue
-                    pass
+                except Exception as e:
+                    # Log hook execution error and continue
+                    print(f"Post-output hook {hook.name} failed: {e}")
+                    continue
         return modified_response
 
 # Test implementation
