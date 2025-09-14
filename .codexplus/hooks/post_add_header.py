@@ -13,7 +13,9 @@ class AddHeader(Hook):
         # only add on non-streaming responses
         try:
             response.headers['X-Hooked'] = '1'
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Failed to add header to response: {e}")
         return response
 hook = AddHeader('add-header', {'type':'post-output','priority':50,'enabled':True})

@@ -1,74 +1,102 @@
 #!/usr/bin/env python3
 """
 Test the full LLM execution flow
-Simulates what would happen when Codex CLI sends a slash command
+Tests slash command processing through the middleware
 """
+import pytest
 import json
 import asyncio
+from unittest.mock import Mock, AsyncMock
 from codex_plus.llm_execution_middleware import LLMExecutionMiddleware
 
-async def simulate_request():
-    """Simulate a request from Codex CLI with a slash command"""
-    
-    print("🚀 Testing LLM Execution Flow")
-    print("=" * 60)
-    
-    # Create middleware instance
-    middleware = LLMExecutionMiddleware("https://chatgpt.com/backend-api/codex")
-    
-    # Test cases to try
-    test_commands = [
-        "/hello Claude",
-        "/test auth.py",
-        "/search TODO",
-        "/explain this code:\ndef foo(x):\n    return x * 2"
-    ]
-    
-    for command in test_commands:
-        print(f"\n📝 Testing command: {command}")
-        print("-" * 40)
-        
-        # Simulate Codex CLI request format
-        codex_request = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": command}
-            ],
-            "stream": True
-        }
-        
-        # Process through middleware
-        modified = middleware.inject_execution_behavior(codex_request.copy())
-        
-        # Show what gets sent to the LLM
-        print("\n🤖 Instructions sent to LLM:")
-        if "messages" in modified:
-            system_msg = modified["messages"][0]
-            if system_msg["role"] == "system":
-                # Show just the key parts of the system instruction
-                instruction = system_msg["content"]
-                lines = instruction.split('\n')
-                
-                # Show first 10 lines and last 5 lines
-                if len(lines) > 20:
-                    preview = '\n'.join(lines[:10]) + "\n...\n" + '\n'.join(lines[-5:])
-                else:
-                    preview = instruction
-                
-                print(preview)
-        
-        print("\n💬 User sees: " + command)
-        print()
-    
-    print("=" * 60)
-    print("\n✅ Test complete!")
-    print("\n💡 Key insight: The LLM now receives behavioral instructions")
-    print("   to execute commands rather than just expanded text.")
-    print("\n🎯 Benefits:")
-    print("   1. LLM understands it should execute, not converse")
-    print("   2. Original slash command preserved for clarity")
-    print("   3. LLM can use its training on command execution patterns")
-    print("   4. More similar to how Claude Code CLI works")
+
+class TestLLMExecutionFlow:
+    """Test suite for LLM execution flow with proper assertions"""
+
+    @pytest.fixture
+    def middleware(self):
+        """Create middleware instance for testing"""
+        return LLMExecutionMiddleware("https://chatgpt.com/backend-api/codex")
+
+    def test_slash_command_detection(self, middleware):
+        """Test that slash commands are properly detected"""
+        test_cases = [
+            ("/hello Claude", True),
+            ("/test auth.py", True),
+            ("/search TODO", True),
+            ("regular message", False),
+            ("", False),
+        ]
+
+        for command, expected in test_cases:
+            if command is None:
+                continue  # Skip None case as detect_slash_commands expects string
+
+            result = middleware.detect_slash_commands(command)
+            if expected:
+                assert result, f"Expected slash command detection for: {command}"
+                assert len(result) > 0, "Should detect at least one command"
+            else:
+                assert not result or len(result) == 0, f"Should not detect slash command for: {command}"
+
+    def test_command_parsing(self, middleware):
+        """Test that slash commands are parsed correctly"""
+        test_cases = [
+            ("/hello Claude", ("hello", "Claude")),
+            ("/test auth.py", ("test", "auth.py")),
+            ("/search TODO", ("search", "TODO")),
+            ("/explain this code:\ndef foo(x):\n    return x * 2", ("explain", "this code:\ndef foo(x):\n    return x * 2"))
+        ]
+
+        for command, expected in test_cases:
+            result = middleware.detect_slash_commands(command)
+
+            assert result, f"Should detect slash command: {command}"
+            command_name, args = result[0]
+            expected_name, expected_args = expected
+
+            assert command_name == expected_name, f"Command name mismatch for {command}"
+            assert args == expected_args, f"Arguments mismatch for {command}"
+
+    def test_middleware_initialization(self, middleware):
+        """Test that middleware initializes correctly"""
+        assert middleware.upstream_url == "https://chatgpt.com/backend-api/codex"
+        assert hasattr(middleware, 'detect_slash_commands')
+        assert hasattr(middleware, 'process_request')
+
+    @pytest.mark.asyncio
+    async def test_empty_payload_handling(self, middleware):
+        """Test handling of empty or malformed payloads"""
+        empty_texts = [
+            "",
+            "   ",  # whitespace only
+            "no slash commands here"
+        ]
+
+        for text in empty_texts:
+            try:
+                result = middleware.detect_slash_commands(text)
+                assert not result or len(result) == 0, "Empty text should not detect commands"
+            except Exception as e:
+                pytest.fail(f"Middleware should handle empty text gracefully, got: {e}")
+
+    def test_special_characters_in_commands(self, middleware):
+        """Test handling of special characters in slash commands"""
+        test_cases = [
+            "/search @TODO",
+            "/test file-name.py",
+            "/explain code with\nnewlines",
+            "/command with spaces and symbols !@#$%"
+        ]
+
+        for command in test_cases:
+            try:
+                result = middleware.detect_slash_commands(command)
+                assert result, f"Should detect command with special chars: {command}"
+            except Exception as e:
+                pytest.fail(f"Should handle special characters gracefully, got: {e}")
+
 
 if __name__ == "__main__":
-    asyncio.run(simulate_request())
+    # Allow direct execution for debugging
+    pytest.main([__file__, "-v"])

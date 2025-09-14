@@ -190,8 +190,9 @@ class HookSystem:
                         'mode': sl.get('mode') or sl.get('appendMode'),
                     }
             self.status_line_cfg = sl_codex or sl_claude
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to load status line configuration: {e}")
+            self.status_line_cfg = None
 
     async def run_status_line(self) -> Optional[str]:
         """Run statusLine command from settings and return a short line for SSE."""
@@ -413,8 +414,8 @@ class HookSystem:
                 ).strip()
                 if git_root:
                     project_dir = git_root
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to get git root directory: {e}")
 
             env = os.environ.copy()
             env.setdefault("CLAUDE_PROJECT_DIR", project_dir)
@@ -508,8 +509,8 @@ class HookSystem:
                                 payload["prompt"] = c.get("text", "")
                                 break
                         break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to extract prompt from request body: {e}")
 
         # Execute hooks in order; first block wins, collect additional context
         additional_contexts: List[str] = []
@@ -543,9 +544,9 @@ class HookSystem:
                                     c["text"] = f"[HOOK-CONTEXT]\n{context_text}\n\n" + c.get("text", "")
                                     raise StopIteration
             except StopIteration:
-                pass
-            except Exception:
-                pass
+                pass  # Expected flow control for successful context injection
+            except Exception as e:
+                logger.debug(f"Failed to inject additional context: {e}")
 
         return body
 
