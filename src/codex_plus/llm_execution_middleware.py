@@ -141,21 +141,29 @@ BEGIN EXECUTION NOW:
     
     def inject_execution_behavior(self, request_body: Dict) -> Dict:
         """Modify request to inject execution behavior"""
-        
+
         # Detect slash commands in the user's message
         commands = []
-        
+
         # Handle Codex CLI format with input field
         if "input" in request_body:
-            for item in request_body["input"]:
+            logger.info(f"🔍 Processing input field with {len(request_body['input'])} items")
+            for i, item in enumerate(request_body["input"]):
                 if isinstance(item, dict) and item.get("type") == "message":
+                    logger.info(f"🔍 Processing message item {i}")
                     content_list = item.get("content", [])
-                    for content_item in content_list:
+                    for j, content_item in enumerate(content_list):
                         if isinstance(content_item, dict) and content_item.get("type") == "input_text":
                             text = content_item.get("text", "")
+                            logger.info(f"🔍 Checking text in item {i}, content {j}: '{text[:50]}...'")
                             detected = self.detect_slash_commands(text)
                             if detected:
+                                logger.info(f"🎯 Found slash commands in item {i}: {detected}")
                                 commands.extend(detected)
+                            else:
+                                logger.info(f"🔍 No slash commands found in: '{text[:50]}...'")
+                else:
+                    logger.info(f"🔍 Skipping non-message item {i}: {item.get('type')}")
         
         # Handle standard format with messages field
         elif "messages" in request_body:
@@ -200,6 +208,7 @@ BEGIN EXECUTION NOW:
     
     async def process_request(self, request, path: str):
         """Process request with execution behavior injection"""
+        logger.info(f"🚀 MIDDLEWARE processing {request.method} /{path}")
         from fastapi.responses import StreamingResponse, JSONResponse
         import os
         from curl_cffi import requests
@@ -229,15 +238,24 @@ BEGIN EXECUTION NOW:
 
                 # Detect slash commands for hook gating
                 commands: List[Tuple[str, str]] = []
+                logger.info(f"🔍 Checking for slash commands in request data")
                 if "input" in data:
-                    for item in data["input"]:
+                    logger.info(f"🔍 Found 'input' field with {len(data['input'])} items")
+                    for i, item in enumerate(data["input"]):
                         if isinstance(item, dict) and item.get("type") == "message":
-                            for content_item in (item.get("content", []) or []):
+                            logger.info(f"🔍 Processing message item {i}")
+                            for j, content_item in enumerate(item.get("content", []) or []):
                                 if isinstance(content_item, dict) and content_item.get("type") == "input_text":
                                     text = content_item.get("text", "")
+                                    logger.info(f"🔍 Checking text in item {i}, content {j}: '{text[:50]}...'")
                                     detected = self.detect_slash_commands(text)
                                     if detected:
+                                        logger.info(f"🎯 FOUND SLASH COMMANDS: {detected}")
                                         commands.extend(detected)
+                                    else:
+                                        logger.info(f"🔍 No slash commands in: '{text[:50]}...'")
+                        else:
+                            logger.info(f"🔍 Skipping non-message item {i}: type={item.get('type')}")
                 elif "messages" in data:
                     for message in data["messages"]:
                         if message.get("role") == "user" and "content" in message:
@@ -289,6 +307,13 @@ BEGIN EXECUTION NOW:
         for k, v in headers.items():
             if k.lower() not in hop_by_hop:
                 clean_headers[k] = v
+
+        # Debug: Log auth headers to see if they're being forwarded
+        auth_headers = {k: v for k, v in clean_headers.items() if 'auth' in k.lower() or 'cookie' in k.lower()}
+        if auth_headers:
+            logger.info(f"🔑 Forwarding auth headers: {list(auth_headers.keys())}")
+        else:
+            logger.warning(f"⚠️  NO AUTH HEADERS found in request to {target_url}")
         
         try:
             # Use synchronous curl_cffi with Chrome impersonation
