@@ -104,7 +104,15 @@ async def proxy(request: Request, path: str):
     
     # Process request through slash command middleware
     # This will either handle slash commands or proxy normally
-    response = await slash_middleware.process_request(request, path)
+    try:
+        logger.info(f"🎯 Calling middleware for {path}")
+        response = await slash_middleware.process_request(request, path)
+        logger.info(f"✅ Middleware completed for {path}")
+    except Exception as e:
+        logger.error(f"❌ Middleware failed for {path}: {e}")
+        # Fallback to basic proxy behavior
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": f"Middleware error: {str(e)}"}, status_code=500)
 
     # Apply post-output hooks only for non-streaming responses to avoid consuming streams
     try:
