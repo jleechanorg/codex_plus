@@ -58,87 +58,7 @@ from .hooks import (
 )
 
 
-class HookMiddleware:
-    """Lightweight middleware to run hook-like side effects around responses.
-
-    This avoids invoking external scripts directly and computes any needed
-    status lines using Python and standard git commands.
-    """
-
-    def __init__(self, enable_git_status: bool = True):
-        self.enable_git_status = enable_git_status
-
-    async def emit_status_line(self) -> None:
-        if not self.enable_git_status:
-            return
-        import asyncio
-        import subprocess
-        import sys as _sys
-        try:
-            # Detect git root and branch
-            git_root = subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            ).strip()
-            local_branch = subprocess.check_output(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            ).strip()
-            # Upstream and ahead/behind
-            try:
-                upstream = subprocess.check_output(
-                    ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-                    text=True,
-                    stderr=subprocess.DEVNULL,
-                ).strip()
-            except subprocess.CalledProcessError:
-                upstream = "no upstream"
-
-            local_status = ""
-            if upstream != "no upstream":
-                try:
-                    ahead = int(
-                        subprocess.check_output(
-                            ["git", "rev-list", "--count", f"{upstream}..HEAD"],
-                            text=True,
-                            stderr=subprocess.DEVNULL,
-                        ).strip()
-                    )
-                except Exception:
-                    ahead = 0
-                try:
-                    behind = int(
-                        subprocess.check_output(
-                            ["git", "rev-list", "--count", f"HEAD..{upstream}"],
-                            text=True,
-                            stderr=subprocess.DEVNULL,
-                        ).strip()
-                    )
-                except Exception:
-                    behind = 0
-                if ahead == 0 and behind == 0:
-                    local_status = " (synced)"
-                elif ahead > 0 and behind == 0:
-                    local_status = f" (ahead {ahead})"
-                elif ahead == 0 and behind > 0:
-                    local_status = f" (behind {behind})"
-                else:
-                    local_status = f" (diverged +{ahead} -{behind})"
-            else:
-                local_status = " (no remote)"
-
-            repo_name = git_root.rstrip("/\\").split("/")[-1]
-            header = f"[Dir: {repo_name} | Local: {local_branch}{local_status} | Remote: {upstream} | PR: none]"
-            logger.info("🎯 Git Status Line:")
-            logger.info(f"   {header}")
-            # Write transient status line to terminal
-            print(f"\r{header}", file=_sys.stderr, flush=True)
-        except Exception:
-            # Best-effort only; never block or raise
-            pass
-
+from .status_line_middleware import HookMiddleware
 
 hook_middleware = HookMiddleware()
 
@@ -178,40 +98,9 @@ async def proxy(request: Request, path: str):
     # Debug: Log request body to see system prompts
     logger.debug(f"Path: {path}, Body length: {len(body) if body else 0}")
     
-    # Debug: Log request body to see system prompts (preserve original behavior)
-    if body and path == "responses":
-        logger.info(f"Capturing request to /responses endpoint")
-        try:
-            import json
-            from pathlib import Path
-            import subprocess
-            
-            # Get current git branch name
-            branch = subprocess.check_output(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                text=True
-            ).strip()
-            
-            payload = json.loads(body)
-            logger.info(f"Parsed payload with keys: {list(payload.keys())}")
-            
-            # Create directory with branch name
-            log_dir = Path(f"/tmp/codex_plus/{branch}")
-            log_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Write the full payload to see structure
-            log_file = log_dir / "request_payload.json"
-            log_file.write_text(json.dumps(payload, indent=2))
-            
-            logger.info(f"Logged full payload to {log_file}")
-            
-            # Also log just the instructions if available
-            if "instructions" in payload:
-                instructions_file = log_dir / "instructions.txt"
-                instructions_file.write_text(payload["instructions"])
-                logger.info(f"Logged instructions to {instructions_file}")
-        except Exception as e:
-            logger.error(f"Failed to log messages: {e}")
+    # Debug: Log request payload for debugging
+    from .request_logger import RequestLogger
+    RequestLogger.log_request_payload(body, path)
     
     # Process request through slash command middleware
     # This will either handle slash commands or proxy normally
