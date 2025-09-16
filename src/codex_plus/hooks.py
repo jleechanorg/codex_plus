@@ -420,10 +420,11 @@ class HookSystem:
             env = os.environ.copy()
             env.setdefault("CLAUDE_PROJECT_DIR", project_dir)
 
-            # Expand env and project vars, then split
+            # Expand only safe project vars (no arbitrary env var expansion)
             cmd_str = str(cmd)
             cmd_str = cmd_str.replace("$CLAUDE_PROJECT_DIR", project_dir).replace("${CLAUDE_PROJECT_DIR}", project_dir)
-            parts = cmd if isinstance(cmd, list) else shlex.split(_os.path.expandvars(cmd_str))
+            # Only split, don't expand arbitrary environment variables for security
+            parts = cmd if isinstance(cmd, list) else shlex.split(cmd_str)
             if not parts:
                 return 1, "", "Empty command", None
 
