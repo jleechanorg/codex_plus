@@ -7,7 +7,6 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import re
-from curl_cffi import requests
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +39,13 @@ class LLMExecutionMiddleware:
         """Detect slash commands in text and return (command, args) tuples"""
         commands = []
         # Match commands at start of line or after whitespace
-        # Use non-greedy matching to stop at next slash command or newline
-        pattern = r'(?:^|\s)/([A-Za-z0-9_-]+)(?:\s+(.*?)(?=\s/|$))?'
-
-        for match in re.finditer(pattern, text, re.DOTALL):
+        pattern = r'(?:^|\s)/([A-Za-z0-9_-]+)(?:\s+([^\n/]*))?'
+        
+        for match in re.finditer(pattern, text):
             command = match.group(1)
             args = match.group(2) or ""
             commands.append((command, args.strip()))
-
+            
         return commands
     
     def find_command_file(self, command_name: str) -> Optional[Path]:
@@ -116,8 +114,8 @@ Available slash commands and their behaviors:
                         preview = ''.join(lines).strip()
                         if preview:
                             instruction += f"\n  - Preview: {preview[:100]}..."
-                except Exception as e:
-                    logger.debug(f"Failed to read command file preview for {command_file}: {e}")
+                except:
+                    pass
             else:
                 # Generic instruction for unknown commands
                 instruction += f"\n/{command_name}:"
@@ -142,29 +140,21 @@ BEGIN EXECUTION NOW:
     
     def inject_execution_behavior(self, request_body: Dict) -> Dict:
         """Modify request to inject execution behavior"""
-
+        
         # Detect slash commands in the user's message
         commands = []
-
+        
         # Handle Codex CLI format with input field
         if "input" in request_body:
-            logger.info(f"🔍 Processing input field with {len(request_body['input'])} items")
-            for i, item in enumerate(request_body["input"]):
+            for item in request_body["input"]:
                 if isinstance(item, dict) and item.get("type") == "message":
-                    logger.info(f"🔍 Processing message item {i}")
                     content_list = item.get("content", [])
-                    for j, content_item in enumerate(content_list):
+                    for content_item in content_list:
                         if isinstance(content_item, dict) and content_item.get("type") == "input_text":
                             text = content_item.get("text", "")
-                            logger.info(f"🔍 Checking text in item {i}, content {j}: '{text[:50]}...'")
                             detected = self.detect_slash_commands(text)
                             if detected:
-                                logger.info(f"🎯 Found slash commands in item {i}: {detected}")
                                 commands.extend(detected)
-                            else:
-                                logger.info(f"🔍 No slash commands found in: '{text[:50]}...'")
-                else:
-                    logger.info(f"🔍 Skipping non-message item {i}: {item.get('type')}")
         
         # Handle standard format with messages field
         elif "messages" in request_body:
@@ -209,73 +199,17 @@ BEGIN EXECUTION NOW:
     
     async def process_request(self, request, path: str):
         """Process request with execution behavior injection"""
-        logger.info(f"🚀 MIDDLEWARE processing {request.method} /{path}")
         from fastapi.responses import StreamingResponse, JSONResponse
-        import os
         from curl_cffi import requests
-        # Import hook helpers lazily to avoid cycles
-        from .hooks import (
-            settings_pre_tool_use,
-            settings_post_tool_use,
-        )
         
         body = await request.body()
-        # Initialize headers early so we can safely update content-length
         headers = dict(request.headers)
-        # Respect pre-input hooks if a modified body was provided
-        try:
-            if hasattr(request, 'state') and getattr(request.state, 'modified_body', None):
-                body = request.state.modified_body
-                headers['content-length'] = str(len(body))
-                logger.info("Using body from pre-input hooks")
-        except Exception as e:
-            logger.debug(f"Unable to read modified_body from request.state: {e}")
         
         # Only process if we have a JSON body
         if body:
             try:
                 # Parse and potentially modify the request
                 data = json.loads(body)
-
-                # Detect slash commands for hook gating
-                commands: List[Tuple[str, str]] = []
-                logger.info(f"🔍 Checking for slash commands in request data")
-                if "input" in data:
-                    logger.info(f"🔍 Found 'input' field with {len(data['input'])} items")
-                    for i, item in enumerate(data["input"]):
-                        if isinstance(item, dict) and item.get("type") == "message":
-                            logger.info(f"🔍 Processing message item {i}")
-                            for j, content_item in enumerate(item.get("content", []) or []):
-                                if isinstance(content_item, dict) and content_item.get("type") == "input_text":
-                                    text = content_item.get("text", "")
-                                    logger.info(f"🔍 Checking text in item {i}, content {j}: '{text[:50]}...'")
-                                    detected = self.detect_slash_commands(text)
-                                    if detected:
-                                        logger.info(f"🎯 FOUND SLASH COMMANDS: {detected}")
-                                        commands.extend(detected)
-                                    else:
-                                        logger.info(f"🔍 No slash commands in: '{text[:50]}...'")
-                        else:
-                            logger.info(f"🔍 Skipping non-message item {i}: type={item.get('type')}")
-                elif "messages" in data:
-                    for message in data["messages"]:
-                        if message.get("role") == "user" and "content" in message:
-                            text = message.get("content")
-                            detected = self.detect_slash_commands(text)
-                            if detected:
-                                commands.extend(detected)
-
-                # Run settings PreToolUse hooks against detected commands
-                if commands:
-                    for cmd_name, cmd_args in commands:
-                        tool_name = f"SlashCommand/{cmd_name}"
-                        tool_args = {"args": cmd_args}
-                        _args, block = await settings_pre_tool_use(request, tool_name, tool_args)
-                        if block:
-                            reason = block.get("reason", "Blocked by hook")
-                            return JSONResponse({"error": reason}, status_code=400)
-
-                # Inject execution behavior once pre-hooks allow
                 modified_data = self.inject_execution_behavior(data)
                 
                 # Convert back to JSON
@@ -308,13 +242,6 @@ BEGIN EXECUTION NOW:
         for k, v in headers.items():
             if k.lower() not in hop_by_hop:
                 clean_headers[k] = v
-
-        # Debug: Log auth headers to see if they're being forwarded
-        auth_headers = {k: v for k, v in clean_headers.items() if 'auth' in k.lower() or 'cookie' in k.lower()}
-        if auth_headers:
-            logger.info(f"🔑 Forwarding auth headers: {list(auth_headers.keys())}")
-        else:
-            logger.warning(f"⚠️  NO AUTH HEADERS found in request to {target_url}")
         
         try:
             # Use synchronous curl_cffi with Chrome impersonation
