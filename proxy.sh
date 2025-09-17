@@ -63,7 +63,8 @@ start_proxy() {
     
     # Start proxy in background
     source "$VENV_PATH/bin/activate"
-    nohup python -c "from $PROXY_MODULE import app; import uvicorn; uvicorn.run(app, host='127.0.0.1', port=3000)" > "$LOG_FILE" 2>&1 &
+    export PYTHONPATH="$SCRIPT_DIR/src:$PYTHONPATH"
+    nohup python -c "from codex_plus.$PROXY_MODULE import app; import uvicorn; uvicorn.run(app, host='127.0.0.1', port=3000)" > "$LOG_FILE" 2>&1 &
     PID=$!
     echo "$PID" > "$PID_FILE"
     
