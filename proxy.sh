@@ -25,10 +25,10 @@ print_status() {
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
             echo -e "  ${GREEN}✅ Running${NC} (PID: $PID)"
-            echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
-            echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
+            echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:3000"
+            echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:3000/health"
             echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
-            echo -e "  ${GREEN}📊 Usage:${NC} OPENAI_BASE_URL=http://localhost:10000 codex"
+            echo -e "  ${GREEN}📊 Usage:${NC} OPENAI_BASE_URL=http://localhost:3000 codex"
             return 0
         else
             echo -e "  ${RED}❌ Not running${NC} (stale PID file)"
@@ -63,8 +63,7 @@ start_proxy() {
     
     # Start proxy in background
     source "$VENV_PATH/bin/activate"
-    export PYTHONPATH="$SCRIPT_DIR/src:$PYTHONPATH"
-    nohup python -c "from codex_plus.$PROXY_MODULE import app; import uvicorn; uvicorn.run(app, host='127.0.0.1', port=10000)" > "$LOG_FILE" 2>&1 &
+    nohup python -c "from $PROXY_MODULE import app; import uvicorn; uvicorn.run(app, host='127.0.0.1', port=3000)" > "$LOG_FILE" 2>&1 &
     PID=$!
     echo "$PID" > "$PID_FILE"
     
@@ -122,7 +121,7 @@ show_help() {
     echo "Examples:"
     echo "  $0 enable                                    # Start proxy"
     echo "  $0 status                                    # Check status"
-    echo "  OPENAI_BASE_URL=http://localhost:10000 codex  # Use with codex"
+    echo "  OPENAI_BASE_URL=http://localhost:3000 codex  # Use with codex"
     echo "  $0 disable                                   # Stop proxy"
 }
 
