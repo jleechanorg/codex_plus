@@ -68,6 +68,35 @@ async def health():
     logger.info("HEALTH OK")
     return JSONResponse({"status": "healthy"})
 
+@app.get("/v1/models")
+async def models():
+    """OpenAI-compatible models endpoint for Codex CLI"""
+    logger.info("MODELS endpoint called")
+    # Return a minimal compatible response that Codex CLI expects
+    return JSONResponse({
+        "object": "list",
+        "data": [
+            {
+                "id": "gpt-4",
+                "object": "model",
+                "created": 1677610602,
+                "owned_by": "openai",
+                "permission": [],
+                "root": "gpt-4",
+                "parent": None
+            },
+            {
+                "id": "gpt-4-turbo", 
+                "object": "model",
+                "created": 1677610602,
+                "owned_by": "openai",
+                "permission": [],
+                "root": "gpt-4-turbo",
+                "parent": None
+            }
+        ]
+    })
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(request: Request, path: str):
     """Proxy with integrated slash command middleware support"""

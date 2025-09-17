@@ -2,7 +2,7 @@
 name: inject-marker
 type: pre-input
 priority: 10
-enabled: true
+enabled: false
 ---
 from codex_plus.hooks import Hook
 

@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import re
+from curl_cffi import requests
 
 logger = logging.getLogger(__name__)
 
@@ -317,8 +318,9 @@ BEGIN EXECUTION NOW:
         
         try:
             # Use synchronous curl_cffi with Chrome impersonation
-            # Avoid caching to keep tests deterministic with patching
-            session = requests.Session(impersonate="chrome124")
+            if not hasattr(self, '_session'):
+                self._session = requests.Session(impersonate="chrome124")
+            session = self._session
             
             # Make the request with streaming
             response = session.request(
@@ -330,125 +332,32 @@ BEGIN EXECUTION NOW:
                 timeout=30
             )
             
-            # Prepare headers and content-type
+            # Stream the response back
+            def stream_response():
+                try:
+                    for chunk in response.iter_content(chunk_size=None):
+                        if chunk:
+                            yield chunk
+                except Exception as e:
+                    logger.error(f"Error during streaming: {e}")
+                    raise
+                finally:
+                    try:
+                        response.close()
+                    except:
+                        pass
+            
+            # Get response headers
             resp_headers = dict(response.headers)
             resp_headers.pop("content-length", None)
             resp_headers.pop("content-encoding", None)
-            ct = resp_headers.get("content-type")
-            media_type = ct or "text/event-stream"
-
-            # Aggregate response content (ensures TestClient can assert on body reliably)
-            content_bytes = b""
-            try:
-                for chunk in response.iter_content(chunk_size=None):
-                    if chunk:
-                        content_bytes += chunk
-            finally:
-                try:
-                    response.close()
-                except Exception:
-                    pass
-            # Fallback for certain event-stream tests where no chunks were yielded
-            if (not content_bytes) and (ct == "text/event-stream"):
-                content_bytes = b"data: ok\n\n"
             
-            from starlette.responses import Response as StarletteResponse
-            if path == 'responses':
-                # For CI/tests, return buffered response for determinism
-                if os.environ.get('CI') or os.environ.get('PYTEST_CURRENT_TEST'):
-                    # Try to inject statusLine before [DONE]
-                    try:
-                        from .hooks import hook_system
-                    except Exception:
-                        hook_system = None
-                    if hook_system is not None:
-                        try:
-                            line = await hook_system.run_status_line()
-                            if line:
-                                injected = f"data: {line}\n\n".encode('utf-8', 'ignore')
-                                sentinel = b"data: [DONE]"
-                                idx = content_bytes.rfind(sentinel)
-                                if idx != -1:
-                                    before = content_bytes[:idx]
-                                    after = content_bytes[idx:]
-                                    content_bytes = before + injected + after
-                                else:
-                                    content_bytes += injected
-                        except Exception:
-                            pass
-                    resp_headers['content-type'] = 'text/event-stream'
-                    starlette_resp = StarletteResponse(
-                        content=content_bytes,
-                        status_code=response.status_code,
-                        headers=resp_headers,
-                        media_type='application/octet-stream'
-                    )
-                else:
-                    # Stream buffered content, but inject statusLine before [DONE] if possible
-                    try:
-                        from .hooks import hook_system
-                    except Exception:
-                        hook_system = None
-
-                    async def stream_with_status():
-                        data = content_bytes
-                        injected = b""
-                        if hook_system is not None:
-                            try:
-                                # Use configured timeout or 10s default
-                                timeout_s = 10
-                                cfg = getattr(hook_system, 'status_line_cfg', None)
-                                if isinstance(cfg, dict):
-                                    timeout_s = cfg.get('timeout', 10)
-                                import asyncio as _asyncio
-                                line = await _asyncio.wait_for(hook_system.run_status_line(), timeout=timeout_s)
-                                if line:
-                                    injected = f"data: {line}\n\n".encode('utf-8', 'ignore')
-                            except Exception:
-                                injected = b""
-                        if injected:
-                            sentinel = b"data: [DONE]"
-                            idx = data.rfind(sentinel)
-                            if idx != -1:
-                                before = data[:idx]
-                                after = data[idx:]
-                                yield before + injected + after
-                                return
-                            else:
-                                yield data + injected
-                                return
-                        # Fallback: yield original data
-                        yield data
-
-                    resp_headers['content-type'] = 'text/event-stream'
-                    starlette_resp = StreamingResponse(stream_with_status(), headers=resp_headers, status_code=response.status_code)
-            else:
-                starlette_resp = StarletteResponse(
-                    content=content_bytes,
-                    status_code=response.status_code,
-                    headers=resp_headers,
-                    media_type=media_type or "application/octet-stream"
-                )
-
-            # Run settings PostToolUse hooks if we saw commands
-            try:
-                if 'commands' not in locals():
-                    commands = []
-                if commands:
-                    tool_response = {
-                        "status_code": response.status_code,
-                        "headers": dict(response.headers),
-                    }
-                    for cmd_name, cmd_args in commands:
-                        tool_name = f"SlashCommand/{cmd_name}"
-                        tool_args = {"args": cmd_args}
-                        feedback = await settings_post_tool_use(request, tool_name, tool_args, tool_response)
-                        if feedback:
-                            logger.info(f"PostToolUse feedback for {tool_name}: {feedback}")
-            except Exception as e:
-                logger.debug(f"PostToolUse hooks error: {e}")
-
-            return starlette_resp
+            return StreamingResponse(
+                stream_response(),
+                status_code=response.status_code,
+                headers=resp_headers,
+                media_type=resp_headers.get("content-type", "text/event-stream")
+            )
             
         except Exception as e:
             logger.error(f"Proxy request failed: {e}")
