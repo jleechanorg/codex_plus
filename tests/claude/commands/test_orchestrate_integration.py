@@ -15,17 +15,15 @@ import time
 from datetime import datetime
 from typing import Optional
 
+# Use pytest.importorskip to handle missing orchestrate module gracefully during collection
+import pytest
+
 # Add orchestrate module to path (now in .claude/commands)
 orchestrate_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '.claude', 'commands')
 sys.path.insert(0, orchestrate_path)
 
-try:
-    from orchestrate import OrchestrationCLI
-except ImportError as e:
-    print(f"❌ Failed to import orchestrate module: {e}")
-    print("⚠️ Skipping orchestration integration test - module not available")
-    print("✅ This is expected in CI environments or when orchestration system is not installed")
-    sys.exit(0)  # Exit successfully rather than failing
+# Skip entire module if orchestrate is not available (prevents collection errors)
+OrchestrationCLI = pytest.importorskip("orchestrate", reason="Orchestrate module not available in CI").OrchestrationCLI
 
 
 class OrchestrationIntegrationTest:
