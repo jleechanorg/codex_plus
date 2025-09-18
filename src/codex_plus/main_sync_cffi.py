@@ -8,11 +8,36 @@ DO NOT replace with httpx, requests, or any other HTTP client
 Codex uses ChatGPT backend with session auth, NOT OpenAI API keys
 """
 from fastapi import FastAPI, Request
+from contextlib import asynccontextmanager
 from fastapi.responses import StreamingResponse, JSONResponse
 from curl_cffi import requests
 import logging
+import json as _json
+import json
+import sys
+import os
+import time
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        # Session start hooks
+        try:
+            from .hooks import settings_session_start
+            await settings_session_start(None, source="startup")
+        except Exception as e:
+            logger.error(f"Failed to execute session start hooks: {e}")
+        yield
+    finally:
+        # Session end hooks
+        try:
+            from .hooks import settings_session_end
+            await settings_session_end(None, reason="exit")
+        except Exception as e:
+            logger.error(f"Failed to execute session end hooks: {e}")
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Logger setup (must be defined before first use)
 logger = logging.getLogger("codex_plus_proxy")
@@ -26,12 +51,51 @@ UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Co
 logger.info("Initializing LLM execution middleware (instruction mode)")
 from .llm_execution_middleware import create_llm_execution_middleware
 slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
+from .hooks import (
+    process_pre_input_hooks,
+    process_post_output_hooks,
+    settings_stop,
+)
+
+
+from .status_line_middleware import HookMiddleware
+
+hook_middleware = HookMiddleware()
 
 @app.get("/health")
 async def health():
     """Simple health check - not forwarded"""
     logger.info("HEALTH OK")
     return JSONResponse({"status": "healthy"})
+
+@app.get("/v1/models")
+async def models():
+    """OpenAI-compatible models endpoint for Codex CLI"""
+    logger.info("MODELS endpoint called")
+    # Return a minimal compatible response that Codex CLI expects
+    return JSONResponse({
+        "object": "list",
+        "data": [
+            {
+                "id": "gpt-4",
+                "object": "model",
+                "created": 1677610602,
+                "owned_by": "openai",
+                "permission": [],
+                "root": "gpt-4",
+                "parent": None
+            },
+            {
+                "id": "gpt-4-turbo", 
+                "object": "model",
+                "created": 1677610602,
+                "owned_by": "openai",
+                "permission": [],
+                "root": "gpt-4-turbo",
+                "parent": None
+            }
+        ]
+    })
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(request: Request, path: str):
@@ -41,43 +105,58 @@ async def proxy(request: Request, path: str):
     
     # Read body for debug logging (preserve original behavior)
     body = await request.body()
+    # Apply pre-input hooks for JSON bodies on /responses
+    if body and path == "responses":
+        try:
+            body_dict = _json.loads(body)
+            modified = await process_pre_input_hooks(request, body_dict)
+            if modified != body_dict:
+                # stash modified body for downstream middleware
+                try:
+                    request.state.modified_body = _json.dumps(modified).encode('utf-8')
+                    logger.info("Pre-input hooks applied: request body modified")
+                except Exception as e:
+                    logger.debug(f"Unable to set modified_body on request.state: {e}")
+            # If any settings hooks blocked the prompt, short-circuit
+            if getattr(request.state, 'user_prompt_block', None):
+                reason = request.state.user_prompt_block.get('reason', 'Blocked by hook')
+                return JSONResponse({"error": reason}, status_code=400)
+        except _json.JSONDecodeError:
+            logger.debug("Request body not JSON; skipping pre-input hooks")
+
+    # Debug: Log request body to see system prompts
     logger.debug(f"Path: {path}, Body length: {len(body) if body else 0}")
     
-    # Debug: Log request body to see system prompts (preserve original behavior)
-    if body and path == "responses":
-        logger.info(f"Capturing request to /responses endpoint")
-        try:
-            import json
-            from pathlib import Path
-            import subprocess
-            
-            # Get current git branch name
-            branch = subprocess.check_output(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                text=True
-            ).strip()
-            
-            payload = json.loads(body)
-            logger.info(f"Parsed payload with keys: {list(payload.keys())}")
-            
-            # Create directory with branch name
-            log_dir = Path(f"/tmp/codex_plus/{branch}")
-            log_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Write the full payload to see structure
-            log_file = log_dir / "request_payload.json"
-            log_file.write_text(json.dumps(payload, indent=2))
-            
-            logger.info(f"Logged full payload to {log_file}")
-            
-            # Also log just the instructions if available
-            if "instructions" in payload:
-                instructions_file = log_dir / "instructions.txt"
-                instructions_file.write_text(payload["instructions"])
-                logger.info(f"Logged instructions to {instructions_file}")
-        except Exception as e:
-            logger.error(f"Failed to log messages: {e}")
+    # Debug: Log request payload for debugging
+    from .request_logger import RequestLogger
+    RequestLogger.log_request_payload(body, path)
     
     # Process request through slash command middleware
     # This will either handle slash commands or proxy normally
-    return await slash_middleware.process_request(request, path)
+    try:
+        logger.info(f"🎯 Calling middleware for {path}")
+        response = await slash_middleware.process_request(request, path)
+        logger.info(f"✅ Middleware completed for {path}")
+    except Exception as e:
+        logger.error(f"❌ Middleware failed for {path}: {e}")
+        # Fallback to basic proxy behavior
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": f"Middleware error: {str(e)}"}, status_code=500)
+
+    # Apply post-output hooks only for non-streaming responses to avoid consuming streams
+    try:
+        if not isinstance(response, StreamingResponse):
+            response = await process_post_output_hooks(response)
+    except Exception as e:
+        logger.debug(f"post-output hooks failed: {e}")
+    
+    # Run hook middleware side-effects (non-blocking)
+    import asyncio
+    asyncio.create_task(hook_middleware.emit_status_line())
+    # Also trigger Stop settings hooks (best-effort)
+    try:
+        asyncio.create_task(settings_stop(request, {"transcript_path": ""}))
+    except Exception:
+        pass
+    
+    return response
