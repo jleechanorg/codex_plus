@@ -56,10 +56,11 @@ from .hooks import (
     process_pre_input_hooks,
     process_post_output_hooks,
     settings_stop,
+    hook_system,
 )
 
 
-hook_middleware = HookMiddleware()
+hook_middleware = HookMiddleware(hook_manager=hook_system)
 
 @app.get("/health")
 async def health():
@@ -100,7 +101,19 @@ async def proxy(request: Request, path: str):
     # Debug: Log request payload for debugging
     from .request_logger import RequestLogger
     RequestLogger.log_request_payload(body, path)
-    
+
+    # Get status line and store it in request context for middleware to use
+    try:
+        status_line = await hook_middleware.get_status_line()
+        if status_line:
+            logger.info(f"📍 Storing status line for injection: {status_line}")
+            # Store status line in request state for middleware to access
+            if hasattr(request, 'state'):
+                request.state.status_line = status_line
+            logger.info("✅ Status line stored for middleware injection")
+    except Exception as e:
+        logger.error(f"Status line storage failed: {e}")
+
     # Process request through slash command middleware
     # This will either handle slash commands or proxy normally
     try:
@@ -119,14 +132,13 @@ async def proxy(request: Request, path: str):
             response = await process_post_output_hooks(response)
     except Exception as e:
         logger.debug(f"post-output hooks failed: {e}")
-    
+
     # Run hook middleware side-effects (non-blocking)
     import asyncio
-    asyncio.create_task(hook_middleware.emit_status_line())
     # Also trigger Stop settings hooks (best-effort)
     try:
         asyncio.create_task(settings_stop(request, {"transcript_path": ""}))
     except Exception:
         pass
-    
+
     return response

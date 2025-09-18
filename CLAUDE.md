@@ -17,9 +17,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ❌ Changing the upstream URL → Must be ChatGPT backend
 - ❌ Removing Chrome impersonation → Instant Cloudflare block
 
-## No Local Test Mode
+## Authentication Flow
 
-This proxy does not implement any local mock or test mode. All incoming requests are forwarded upstream. For development and testing, expect 401 Unauthorized from ChatGPT backend when you don’t provide valid session authentication. Do not rely on shortcuts like special headers; they are not supported.
+The proxy forwards all requests with authentication headers intact to the ChatGPT backend. The Codex CLI provides session cookies/JWT tokens in headers, which the proxy preserves during forwarding.
+
+**Expected Behavior:**
+- ✅ With valid Codex CLI session: Requests succeed and return LLM responses
+- ❌ Without authentication: 401 Unauthorized from ChatGPT backend (expected)
+- ❌ With invalid/expired session: 401 Unauthorized from ChatGPT backend
+
+**Testing:**
+- Use `OPENAI_BASE_URL=http://localhost:10000 codex` for authenticated requests
+- Direct curl requests without auth headers will return 401 (this is correct behavior)
 
 ## Project Overview
 

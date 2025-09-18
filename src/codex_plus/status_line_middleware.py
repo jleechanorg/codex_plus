@@ -5,6 +5,7 @@ import asyncio
 import sys as _sys
 import logging
 import re
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -12,36 +13,34 @@ logger = logging.getLogger(__name__)
 class HookMiddleware:
     """Lightweight middleware to run hook-like side effects around responses.
 
-    This avoids invoking external scripts directly and computes any needed
-    status lines using Python and standard git commands.
+    This integrates with the configurable hook system to emit status lines.
     """
 
-    def __init__(self, enable_git_status: bool = True):
+    def __init__(self, hook_manager=None, enable_git_status: bool = True):
+        self.hook_manager = hook_manager
         self.enable_git_status = enable_git_status
 
-    async def emit_status_line(self) -> None:
-        if not self.enable_git_status:
-            return
+    async def get_status_line(self) -> Optional[str]:
+        """Get status line content without printing it"""
+        if not self.enable_git_status or not self.hook_manager:
+            return None
         try:
-            # Use async subprocess for git-header.sh script execution
-            proc = await asyncio.create_subprocess_exec(
-                "bash", "-c",
-                "if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
-                "ROOT=$(git rev-parse --show-toplevel); "
-                "[ -x \"$ROOT/.claude/hooks/git-header.sh\" ] && \"$ROOT/.claude/hooks/git-header.sh\" --status-only; "
-                "else echo \"Not in git repo\"; fi",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
-            result = stdout.decode().strip() if stdout else ""
+            # Use the configurable hook system's run_status_line method
+            result = await self.hook_manager.run_status_line()
 
             if result:
                 logger.info("🎯 Git Status Line:")
                 logger.info(f"   {result}")
-                # Write transient status line to terminal (strip ANSI codes for log)
+                # Strip ANSI codes for HTTP header
                 clean_result = re.sub(r'\x1b\[[0-9;]*m', '', result)
-                print(f"\r{clean_result}", file=_sys.stderr, flush=True)
+                return clean_result
+            return None
         except Exception:
             # Best-effort only; never block or raise
-            pass
+            return None
+
+    async def emit_status_line(self) -> None:
+        """Legacy method - kept for compatibility"""
+        result = await self.get_status_line()
+        if result:
+            print(f"\r{result}", file=_sys.stderr, flush=True)
