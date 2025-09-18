@@ -38,14 +38,38 @@ class LLMExecutionMiddleware:
     def detect_slash_commands(self, text: str) -> List[Tuple[str, str]]:
         """Detect slash commands in text and return (command, args) tuples"""
         commands = []
-        # Match commands at start of line or after whitespace
-        pattern = r'(?:^|\s)/([A-Za-z0-9_-]+)(?:\s+([^\n/]*))?'
-        
-        for match in re.finditer(pattern, text):
-            command = match.group(1)
-            args = match.group(2) or ""
-            commands.append((command, args.strip()))
-            
+
+        # Find all /command positions
+        command_positions = []
+        for match in re.finditer(r'(?:^|\s)/([A-Za-z0-9_-]+)', text):
+            command_positions.append((match.start(), match.end(), match.group(1)))
+
+        i = 0
+        while i < len(command_positions):
+            start, end, command = command_positions[i]
+
+            # Find where this command's arguments end
+            if i + 1 < len(command_positions):
+                next_start, _, _ = command_positions[i + 1]
+                # Check what's between this command and the next
+                between = text[end:next_start]
+                words_between = len(between.strip().split()) if between.strip() else 0
+
+                if words_between >= 2:  # Multiple words = separate command
+                    args = between.strip()
+                else:
+                    # Few/no words = include everything as arguments
+                    args = text[end:].strip()
+                    # Consumed all remaining text, stop processing
+                    commands.append((command, args))
+                    break
+            else:
+                # Last command
+                args = text[end:].strip()
+
+            commands.append((command, args))
+            i += 1
+
         return commands
     
     def find_command_file(self, command_name: str) -> Optional[Path]:
@@ -207,7 +231,12 @@ BEGIN EXECUTION NOW:
         from fastapi.responses import StreamingResponse, JSONResponse
         from curl_cffi import requests
         
-        body = await request.body()
+        # Check if pre-input hooks modified the body
+        if hasattr(request.state, 'modified_body'):
+            body = request.state.modified_body
+            logger.info("Using modified body from pre-input hooks")
+        else:
+            body = await request.body()
         headers = dict(request.headers)
         
         # Only process if we have a JSON body
@@ -266,9 +295,22 @@ BEGIN EXECUTION NOW:
             
             # Stream the response back
             def stream_response():
+                # Check if we have a status line to inject
+                status_line_injected = False
                 try:
+                    # Check for status line from request state
+                    status_line = getattr(request.state, 'status_line', None) if hasattr(request, 'state') else None
+
                     for chunk in response.iter_content(chunk_size=None):
                         if chunk:
+                            # Inject status line before first content chunk
+                            if not status_line_injected and status_line:
+                                # Format like official Claude Code status line (simple, clean format)
+                                status_content = f"{status_line}\n\n"
+                                yield status_content.encode('utf-8')
+                                status_line_injected = True
+                                logger.info(f"✅ Status line injected into stream: {status_line}")
+
                             yield chunk
                 except Exception as e:
                     logger.error(f"Error during streaming: {e}")
