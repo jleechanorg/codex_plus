@@ -17,9 +17,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ❌ Changing the upstream URL → Must be ChatGPT backend
 - ❌ Removing Chrome impersonation → Instant Cloudflare block
 
-## No Local Test Mode
+## Authentication & Request Flow
 
-This proxy does not implement any local mock or test mode. All incoming requests are forwarded upstream. For development and testing, expect 401 Unauthorized from ChatGPT backend when you don’t provide valid session authentication. Do not rely on shortcuts like special headers; they are not supported.
+The proxy forwards all requests with authentication headers intact to the ChatGPT backend. The Codex CLI provides session cookies/JWT tokens in headers, which the proxy preserves during forwarding.
+
+**Expected Behavior:**
+- ✅ **With valid Codex CLI session**: Requests succeed and return 200 + LLM responses
+- ❌ **Without authentication headers**: 401 Unauthorized from ChatGPT backend
+- ❌ **With invalid/expired session**: 401 Unauthorized from ChatGPT backend
+- ❌ **Backend routing issues**: 404 errors (indicates proxy/upstream config problems)
+
+**Testing Guidelines:**
+- ✅ **Authenticated**: `OPENAI_BASE_URL=http://localhost:10000 codex "test"` → Should return 200 + LLM response
+- ❌ **Unauthenticated**: `curl -X POST http://localhost:10000/responses [...]` → Returns 401 (expected)
+- **Never expect 401 to mean "working"** - 401 means "no valid auth provided"
+
+**CRITICAL**: A working proxy should return 200 for authenticated Codex CLI requests. Getting 401 constantly means authentication forwarding is broken.
 
 ## Project Overview
 
@@ -49,26 +62,26 @@ pytest -k "test_name_pattern" -v           # Run pattern-matched tests
 ./proxy.sh disable                         # Stop proxy
 
 # Manual server start (for debugging)
-uvicorn main:app --host 127.0.0.1 --port 3000 --reload  # With reload
+uvicorn main:app --host 127.0.0.1 --port 10000 --reload  # With reload
 ```
 
 ### Usage with Codex CLI
 ```bash
 # Set environment variable to use proxy
-export OPENAI_BASE_URL=http://localhost:3000
+export OPENAI_BASE_URL=http://localhost:10000
 codex  # Now uses proxy
 
 # Or one-time usage
-OPENAI_BASE_URL=http://localhost:3000 codex
+OPENAI_BASE_URL=http://localhost:10000 codex
 ```
 
 ### Testing and Validation
 ```bash
 # Health check
-curl http://localhost:3000/health
+curl http://localhost:10000/health
 
 # Test proxy forwarding manually
-curl -X POST http://localhost:3000/v1/chat/completions \
+curl -X POST http://localhost:10000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your_token" \
   -d '{"model": "claude-3", "messages": [{"role": "user", "content": "test"}]}'
@@ -78,12 +91,12 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 
 ### Current Implementation (M1 - Simple Passthrough Proxy)
 - **Entry Point**: `main.py` - FastAPI application with single proxy route
-- **Startup**: Via `proxy.sh` or `uvicorn main:app --host 127.0.0.1 --port 3000`
+- **Startup**: Via `proxy.sh` or `uvicorn main:app --host 127.0.0.1 --port 10000`
 - **Control**: `proxy.sh` - Process management (start/stop/status/restart)
 - **Testing**: `test_proxy.py` - Comprehensive TDD test suite (11 tests)
 
 ### Request Flow
-1. Codex CLI → HTTP proxy (localhost:3000) 
+1. Codex CLI → HTTP proxy (localhost:10000) 
 2. Proxy forwards to `https://chatgpt.com/backend-api/codex` with preserved headers/streaming
 3. Response streams back through proxy to Codex CLI
 4. Special handling: `/health` endpoint returns local status (not forwarded)
@@ -175,10 +188,10 @@ pytest test_proxy.py::TestSimplePassthroughProxy::test_request_forwarding -v
 tail -f proxy.log
 
 # Debug with verbose logging
-PYTHONPATH=. uvicorn main:app --host 127.0.0.1 --port 3000 --log-level debug
+PYTHONPATH=. uvicorn main:app --host 127.0.0.1 --port 10000 --log-level debug
 
 # Test connectivity
-curl -v http://localhost:3000/health
+curl -v http://localhost:10000/health
 ```
 
 ## Integration Notes
@@ -190,7 +203,7 @@ curl -v http://localhost:3000/health
 
 ### Environment Variables
 ```bash
-export OPENAI_BASE_URL=http://localhost:3000  # Route Codex through proxy
+export OPENAI_BASE_URL=http://localhost:10000  # Route Codex through proxy
 export PYTHONPATH=.                           # For local module imports
 ```
 
