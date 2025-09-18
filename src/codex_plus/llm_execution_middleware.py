@@ -110,9 +110,14 @@ Available slash commands and their behaviors:
                 # Read first few lines of command file for context
                 try:
                     with open(command_file, 'r') as f:
-                        lines = f.readlines()[:5]
-                        preview = ''.join(lines).strip()
-                        if preview:
+                        preview_lines = []
+                        for _ in range(5):
+                            line = f.readline()
+                            if not line:
+                                break
+                            preview_lines.append(line.rstrip())
+                        if preview_lines:
+                            preview = '\n'.join(preview_lines)
                             instruction += f"\n  - Preview: {preview[:100]}..."
                 except:
                     pass

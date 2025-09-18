@@ -71,6 +71,8 @@ class HookSystem:
         self.settings_hooks: Dict[str, List[Dict[str, Any]]] = {}
         self.status_line_cfg: Optional[Dict[str, Any]] = None
         self.session_id: str = os.environ.get("CODEX_PLUS_SESSION_ID", "local-session")
+        # Cache cwd at startup to avoid blocking filesystem calls during requests
+        self._cached_cwd: str = os.getcwd()
         self._load_hooks()
         self._load_settings_hooks()
     
@@ -202,31 +204,66 @@ class HookSystem:
         payload = {
             "session_id": self.session_id,
             "hook_event_name": "StatusLine",
-            "cwd": os.getcwd(),
+            "cwd": self._cached_cwd,
         }
-        code, out, err, _ = self._run_command_hook(cfg["command"], payload, cfg.get("timeout", 2))
+        code, out, err, _ = await self._run_command_hook(cfg["command"], payload, cfg.get("timeout", 2))
         text = (out or err or "").strip()
         if not text or text.lower().startswith('hook timed out'):
-            # Fallback: compute a minimal header via git
+            # Fallback: compute a minimal header via git (async)
             try:
-                import subprocess as _sp
-                root = _sp.check_output(["git","rev-parse","--show-toplevel"], text=True).strip()
-                repo = root.rsplit("/",1)[-1] if root else "repo"
-                br = _sp.check_output(["git","branch","--show-current"], text=True).strip()
+                # Use async subprocess for git commands
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "rev-parse", "--show-toplevel",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+                root = stdout.decode().strip() if stdout else ""
+                repo = root.rsplit("/", 1)[-1] if root else "repo"
+
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "branch", "--show-current",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+                br = stdout.decode().strip() if stdout else "main"
+
+                # Get upstream info
                 try:
-                    up = _sp.check_output(["git","rev-parse","--abbrev-ref","--symbolic-full-name","@{u}"], text=True, stderr=_sp.DEVNULL).strip()
+                    proc = await asyncio.create_subprocess_exec(
+                        "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL
+                    )
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+                    up = stdout.decode().strip() if stdout else "no upstream"
                 except Exception:
                     up = "no upstream"
+
                 a = b = 0
                 if up != "no upstream":
                     try:
-                        a = int(_sp.check_output(["git","rev-list","--count", f"{up}..HEAD"], text=True, stderr=_sp.DEVNULL).strip())
+                        proc = await asyncio.create_subprocess_exec(
+                            "git", "rev-list", "--count", f"{up}..HEAD",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.DEVNULL
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+                        a = int(stdout.decode().strip()) if stdout else 0
                     except Exception:
                         a = 0
                     try:
-                        b = int(_sp.check_output(["git","rev-list","--count", f"HEAD..{up}"], text=True, stderr=_sp.DEVNULL).strip())
+                        proc = await asyncio.create_subprocess_exec(
+                            "git", "rev-list", "--count", f"HEAD..{up}",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.DEVNULL
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+                        b = int(stdout.decode().strip()) if stdout else 0
                     except Exception:
                         b = 0
+
                 status = ""
                 if up == "no upstream":
                     status = " (no remote)"
@@ -398,22 +435,27 @@ class HookSystem:
         except Exception:
             return matcher == tool_name
 
-    def _run_command_hook(self, cmd: str, payload: Dict[str, Any], timeout: Union[int, float]) -> Tuple[int, str, str, Optional[Dict[str, Any]]]:
-        """Run a single command hook with JSON stdin. Return (exit_code, stdout, stderr, parsed_json).
+    async def _run_command_hook(self, cmd: str, payload: Dict[str, Any], timeout: Union[int, float]) -> Tuple[int, str, str, Optional[Dict[str, Any]]]:
+        """Run a single command hook with JSON stdin asynchronously. Return (exit_code, stdout, stderr, parsed_json).
 
         Follows Claude Code format: a settings hook's command may reference a script in
         .codexplus/hooks or .claude/hooks by basename. We resolve and pick interpreter.
         """
-        import subprocess, json, shlex, os as _os
+        import asyncio, json, shlex, os as _os
         try:
             # Best-effort project dir discovery for CLAUDE_PROJECT_DIR
-            project_dir = os.getcwd()
+            project_dir = self._cached_cwd
             try:
-                git_root = subprocess.check_output(
-                    ["git", "rev-parse", "--show-toplevel"], text=True, stderr=subprocess.DEVNULL
-                ).strip()
-                if git_root:
-                    project_dir = git_root
+                # Use async subprocess for git command too
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "rev-parse", "--show-toplevel",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    cwd=project_dir
+                )
+                stdout, _ = await proc.communicate()
+                if proc.returncode == 0:
+                    project_dir = stdout.decode().strip()
             except Exception as e:
                 logger.debug(f"Failed to get git root directory: {e}")
 
@@ -455,26 +497,41 @@ class HookSystem:
                 elif exec_path.endswith(".sh") and not is_exe:
                     parts = ["bash", exec_path] + parts[1:]
 
-            # Run
-            proc = subprocess.run(
-                parts,
-                input=json.dumps(payload),
-                text=True,
-                capture_output=True,
-                timeout=timeout,
-                cwd=project_dir,
+            # Run asynchronously
+            proc = await asyncio.create_subprocess_exec(
+                *parts,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 env=env,
+                cwd=project_dir
             )
 
-            parsed = None
-            if proc.stdout:
-                try:
-                    parsed = json.loads(proc.stdout)
-                except Exception:
-                    parsed = None
-            return proc.returncode, proc.stdout or "", proc.stderr or "", parsed
-        except subprocess.TimeoutExpired:
-            return 124, "", "Hook timed out", None
+            try:
+                # Use asyncio.wait_for for proper timeout handling
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(input=json.dumps(payload).encode()),
+                    timeout=timeout
+                )
+
+                stdout_str = stdout.decode() if stdout else ""
+                stderr_str = stderr.decode() if stderr else ""
+
+                parsed = None
+                if stdout_str:
+                    try:
+                        parsed = json.loads(stdout_str)
+                    except Exception:
+                        parsed = None
+
+                return proc.returncode or 0, stdout_str, stderr_str, parsed
+
+            except asyncio.TimeoutError:
+                # Kill the process and wait for it to terminate
+                proc.kill()
+                await proc.wait()
+                return 124, "", "Hook timed out", None
+
         except Exception as e:
             return 1, "", f"Hook failed: {e}", None
 
@@ -489,7 +546,7 @@ class HookSystem:
         payload = {
             "session_id": self.session_id,
             "transcript_path": "",
-            "cwd": os.getcwd(),
+            "cwd": self._cached_cwd,
             "hook_event_name": event,
             "prompt": "",
         }
@@ -516,7 +573,7 @@ class HookSystem:
         # Execute hooks in order; first block wins, collect additional context
         additional_contexts: List[str] = []
         for h in entries:
-            code, out, err, parsed = self._run_command_hook(h["command"], payload, h["timeout"])
+            code, out, err, parsed = await self._run_command_hook(h["command"], payload, h["timeout"])
             if code == 2:
                 # Block with reason in stderr
                 request.state.user_prompt_block = {"reason": err.strip() or "Blocked by hook"}
@@ -560,7 +617,7 @@ class HookSystem:
         payload = {
             "session_id": self.session_id,
             "transcript_path": "",
-            "cwd": os.getcwd(),
+            "cwd": self._cached_cwd,
             "hook_event_name": event,
             "tool_name": tool_name,
             "tool_input": tool_args,
@@ -568,7 +625,7 @@ class HookSystem:
         for h in entries:
             if h.get("matcher") and not self._match_tool(h["matcher"], tool_name):
                 continue
-            code, out, err, parsed = self._run_command_hook(h["command"], payload, h["timeout"])
+            code, out, err, parsed = await self._run_command_hook(h["command"], payload, h["timeout"])
             if code == 2:
                 return tool_args, {"reason": err.strip() or "Blocked by hook"}
             if parsed and isinstance(parsed, dict):
@@ -588,7 +645,7 @@ class HookSystem:
         payload = {
             "session_id": self.session_id,
             "transcript_path": "",
-            "cwd": os.getcwd(),
+            "cwd": self._cached_cwd,
             "hook_event_name": event,
             "tool_name": tool_name,
             "tool_input": tool_args,
@@ -598,7 +655,7 @@ class HookSystem:
         for h in entries:
             if h.get("matcher") and not self._match_tool(h["matcher"], tool_name):
                 continue
-            _, out, err, parsed = self._run_command_hook(h["command"], payload, h["timeout"])
+            _, out, err, parsed = await self._run_command_hook(h["command"], payload, h["timeout"])
             if parsed and isinstance(parsed, dict):
                 feedbacks.append(parsed)
         # For now return the first structured feedback
@@ -612,12 +669,12 @@ class HookSystem:
         payload = {
             "session_id": self.session_id,
             "transcript_path": "",
-            "cwd": os.getcwd(),
+            "cwd": self._cached_cwd,
             "hook_event_name": event,
             "message": message,
         }
         for h in entries:
-            self._run_command_hook(h["command"], payload, h["timeout"])
+            await self._run_command_hook(h["command"], payload, h["timeout"])
 
     async def run_stop_hooks(self, request: Request, conversation_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         event = "Stop"
@@ -631,7 +688,7 @@ class HookSystem:
             "stop_hook_active": False,
         }
         for h in entries:
-            _, out, err, parsed = self._run_command_hook(h["command"], payload, h["timeout"])
+            _, out, err, parsed = await self._run_command_hook(h["command"], payload, h["timeout"])
             if parsed:
                 return parsed
         return None
@@ -649,7 +706,7 @@ class HookSystem:
             "custom_instructions": custom_instructions,
         }
         for h in entries:
-            self._run_command_hook(h["command"], payload, h["timeout"])
+            await self._run_command_hook(h["command"], payload, h["timeout"])
 
     async def run_session_start_hooks(self, request: Optional[Request], source: str = "startup") -> None:
         event = "SessionStart"
@@ -663,7 +720,7 @@ class HookSystem:
             "source": source,
         }
         for h in entries:
-            self._run_command_hook(h["command"], payload, h["timeout"])
+            await self._run_command_hook(h["command"], payload, h["timeout"])
 
     async def run_session_end_hooks(self, request: Optional[Request], reason: str = "exit") -> None:
         event = "SessionEnd"
@@ -673,12 +730,12 @@ class HookSystem:
         payload = {
             "session_id": self.session_id,
             "transcript_path": "",
-            "cwd": os.getcwd(),
+            "cwd": self._cached_cwd,
             "hook_event_name": event,
             "reason": reason,
         }
         for h in entries:
-            self._run_command_hook(h["command"], payload, h["timeout"])
+            await self._run_command_hook(h["command"], payload, h["timeout"])
     
     async def execute_post_output_hooks(self, response: Union[Response, StreamingResponse]) -> Union[Response, StreamingResponse]:
         """Execute all post_output hooks in priority order"""
