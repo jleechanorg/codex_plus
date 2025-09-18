@@ -9,6 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -32,6 +33,7 @@ jobs:
           pip install pytest
 
       - name: Run tests
+        timeout-minutes: 15
         env:
           # Ensure tests don't require network unless mocked
           NO_NETWORK: '1'
