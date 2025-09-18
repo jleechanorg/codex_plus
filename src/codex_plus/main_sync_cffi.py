@@ -17,6 +17,7 @@ import json
 import sys
 import os
 import time
+from .status_line_middleware import HookMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -58,8 +59,6 @@ from .hooks import (
 )
 
 
-from .status_line_middleware import HookMiddleware
-
 hook_middleware = HookMiddleware()
 
 @app.get("/health")
@@ -67,35 +66,6 @@ async def health():
     """Simple health check - not forwarded"""
     logger.info("HEALTH OK")
     return JSONResponse({"status": "healthy"})
-
-@app.get("/v1/models")
-async def models():
-    """OpenAI-compatible models endpoint for Codex CLI"""
-    logger.info("MODELS endpoint called")
-    # Return a minimal compatible response that Codex CLI expects
-    return JSONResponse({
-        "object": "list",
-        "data": [
-            {
-                "id": "gpt-4",
-                "object": "model",
-                "created": 1677610602,
-                "owned_by": "openai",
-                "permission": [],
-                "root": "gpt-4",
-                "parent": None
-            },
-            {
-                "id": "gpt-4-turbo", 
-                "object": "model",
-                "created": 1677610602,
-                "owned_by": "openai",
-                "permission": [],
-                "root": "gpt-4-turbo",
-                "parent": None
-            }
-        ]
-    })
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(request: Request, path: str):

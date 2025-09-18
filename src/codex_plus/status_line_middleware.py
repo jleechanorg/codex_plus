@@ -1,7 +1,7 @@
 """
 Status line middleware for emitting git status information
 """
-import subprocess
+import asyncio
 import sys as _sys
 import logging
 import re
@@ -23,18 +23,18 @@ class HookMiddleware:
         if not self.enable_git_status:
             return
         try:
-            # Use the configured git-header.sh script for statusline generation
-            result = subprocess.check_output(
-                [
-                    "bash", "-c",
-                    "if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
-                    "ROOT=$(git rev-parse --show-toplevel); "
-                    "[ -x \"$ROOT/.claude/hooks/git-header.sh\" ] && \"$ROOT/.claude/hooks/git-header.sh\" --status-only; "
-                    "else echo \"Not in git repo\"; fi"
-                ],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            ).strip()
+            # Use async subprocess for git-header.sh script execution
+            proc = await asyncio.create_subprocess_exec(
+                "bash", "-c",
+                "if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
+                "ROOT=$(git rev-parse --show-toplevel); "
+                "[ -x \"$ROOT/.claude/hooks/git-header.sh\" ] && \"$ROOT/.claude/hooks/git-header.sh\" --status-only; "
+                "else echo \"Not in git repo\"; fi",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+            result = stdout.decode().strip() if stdout else ""
 
             if result:
                 logger.info("🎯 Git Status Line:")
