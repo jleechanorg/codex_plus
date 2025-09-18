@@ -1,0 +1,25 @@
+# Codex Context Exclusions
+# Large documentation files that cause context overflow in Codex proxy
+docs/pr-guidelines/correctness-validation-checklist.md
+docs/pr-guidelines/*/guidelines.md
+*.large.md
+
+# Large generated documentation
+docs/pr-guidelines/*.md
+# But allow small summaries
+!docs/pr-guidelines/*summary.md
+!docs/pr-guidelines/*issues.md
+
+# Hook system artifacts (only relevant for hook development)
+.codexplus/hooks/
+.claude/hooks/
+
+# Test artifacts and logs
+*.log
+*.pid
+/tmp/codex_plus/
+
+# Virtual environment and dependencies
+venv/
+__pycache__/
+*.pyc
