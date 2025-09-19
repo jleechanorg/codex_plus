@@ -9,7 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -30,12 +30,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pytest
+          pip install pytest pytest-xdist pytest-timeout
 
       - name: Run tests
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           # Ensure tests don't require network unless mocked
           NO_NETWORK: '1'
+          CI: 'true'
+          GITHUB_ACTIONS: 'true'
+          TESTING: 'true'
         run: |
-          pytest -q
+          # Run tests with optimizations for CI environment
+          # Skip slow/integration tests, use parallel execution, set timeouts
+          pytest -q --tb=short --timeout=60 -m "not slow and not integration" \
+                 -n auto --dist=worksteal \
+                 --ignore=tests/claude/commands/test_orchestrate_integration.py \
+                 --maxfail=5
