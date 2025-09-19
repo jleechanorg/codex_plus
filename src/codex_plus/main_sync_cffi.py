@@ -3,9 +3,31 @@
 Codex Plus Proxy using curl_cffi synchronous client for better SSE handling
 Now with integrated slash command middleware for .claude/ infrastructure
 
-🚨 CRITICAL: This proxy REQUIRES curl_cffi to bypass Cloudflare 🚨
-DO NOT replace with httpx, requests, or any other HTTP client
-Codex uses ChatGPT backend with session auth, NOT OpenAI API keys
+🚨🚨🚨 CRITICAL WARNING - DO NOT MODIFY PROXY FORWARDING LOGIC 🚨🚨🚨
+
+⚠️  PROXY FORWARDING CORE IS OFF-LIMITS - MODIFICATIONS FORBIDDEN ⚠️
+- This proxy REQUIRES curl_cffi to bypass Cloudflare - DO NOT CHANGE
+- DO NOT replace with httpx, requests, or any other HTTP client
+- DO NOT modify upstream URL forwarding to ChatGPT backend
+- DO NOT change authentication header handling
+- DO NOT alter streaming response logic
+- Codex uses ChatGPT backend with session auth, NOT OpenAI API keys
+
+✅ SAFE TO MODIFY: Only the hooks module and hook-related functionality
+- Modify files in .codexplus/hooks/ and .claude/hooks/
+- Edit hook processing logic in hooks.py module
+- Add new hook types or middleware integrations
+- Extend status line middleware functionality
+
+🔒 PROTECTED COMPONENTS (DO NOT TOUCH):
+- curl_cffi session configuration and requests
+- Upstream URL and forwarding logic
+- Authentication header preservation
+- Streaming response handling
+- Security validation functions
+- Core proxy request/response cycle
+
+Breaking these rules WILL break the proxy and block all Codex requests.
 """
 from fastapi import FastAPI, Request, HTTPException
 from contextlib import asynccontextmanager
@@ -47,8 +69,10 @@ logger = logging.getLogger("codex_plus_proxy")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
 
-# Configuration
+# 🔒 PROTECTED CONFIGURATION - DO NOT MODIFY 🔒
+# CRITICAL: This URL MUST remain exactly as specified for Codex to work
 UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Codex
+# ⚠️ Changing this URL will break all Codex functionality ⚠️
 
 # Security validation
 def _validate_proxy_request(path: str, headers: dict) -> None:
@@ -95,10 +119,17 @@ def _validate_upstream_url(url: str) -> bool:
     except Exception:
         return False
 
+# 🔒 PROTECTED MIDDLEWARE INITIALIZATION - MODIFY ONLY HOOK COMPONENTS 🔒
+# ✅ SAFE: Hook-related imports and hook_middleware modifications
+# ❌ FORBIDDEN: slash_middleware initialization or create_llm_execution_middleware calls
+
 # Initialize slash command middleware
 logger.info("Initializing LLM execution middleware (instruction mode)")
 from .llm_execution_middleware import create_llm_execution_middleware
+# ⚠️ DO NOT MODIFY: This creates the core proxy forwarding with curl_cffi
 slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
+
+# ✅ SAFE TO MODIFY: Hook system imports and processing
 from .hooks import (
     process_pre_input_hooks,
     process_post_output_hooks,
@@ -106,7 +137,7 @@ from .hooks import (
     hook_system,
 )
 
-
+# ✅ SAFE TO MODIFY: Hook middleware configuration and extensions
 hook_middleware = HookMiddleware(hook_manager=hook_system)
 
 @app.get("/health")
@@ -117,7 +148,19 @@ async def health():
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(request: Request, path: str):
-    """Proxy with integrated slash command middleware support"""
+    """
+    🚨🚨🚨 CRITICAL PROXY FUNCTION - EXTREMELY DANGEROUS TO MODIFY 🚨🚨🚨
+
+    ⚠️  CORE PROXY FORWARDING LOGIC - DO NOT TOUCH UNLESS ABSOLUTELY NECESSARY ⚠️
+
+    This function handles the core Codex proxy forwarding to ChatGPT backend.
+    Modifications to this function can break ALL Codex functionality.
+
+    ✅ SAFE TO MODIFY: Hook processing sections (clearly marked)
+    ❌ FORBIDDEN: Request forwarding, middleware calls, response handling
+
+    Proxy with integrated slash command middleware support
+    """
     # Log incoming request
     logger.info(f"Processing {request.method} /{path}")
 
@@ -157,6 +200,7 @@ async def proxy(request: Request, path: str):
     from .request_logger import RequestLogger
     RequestLogger.log_request_payload(body, path)
 
+    # ✅ SAFE TO MODIFY: Hook processing and status line handling
     # Get status line and store it in request context for middleware to use
     try:
         status_line = await hook_middleware.get_status_line()
@@ -169,6 +213,8 @@ async def proxy(request: Request, path: str):
     except Exception as e:
         logger.error(f"Status line storage failed: {e}")
 
+    # 🔒 PROTECTED: Core middleware call - DO NOT MODIFY 🔒
+    # ❌ CRITICAL: This handles curl_cffi forwarding to ChatGPT backend
     # Process request through slash command middleware
     # This will either handle slash commands or proxy normally
     try:
@@ -181,6 +227,7 @@ async def proxy(request: Request, path: str):
         from fastapi.responses import JSONResponse
         return JSONResponse({"error": f"Middleware error: {str(e)}"}, status_code=500)
 
+    # ✅ SAFE TO MODIFY: Post-output hook processing
     # Apply post-output hooks only for non-streaming responses to avoid consuming streams
     try:
         if not isinstance(response, StreamingResponse):
