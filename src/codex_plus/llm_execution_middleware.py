@@ -258,7 +258,7 @@ BEGIN EXECUTION NOW:
     
     async def process_request(self, request, path: str):
         """Process request with execution behavior injection"""
-        from fastapi.responses import StreamingResponse, JSONResponse
+        from fastapi.responses import StreamingResponse
         from curl_cffi import requests
         
         # Check if pre-input hooks modified the body
