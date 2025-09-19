@@ -17,24 +17,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ❌ Changing the upstream URL → Must be ChatGPT backend
 - ❌ Removing Chrome impersonation → Instant Cloudflare block
 
-## Authentication Flow
+## Authentication & Request Flow
 
 The proxy forwards all requests with authentication headers intact to the ChatGPT backend. The Codex CLI provides session cookies/JWT tokens in headers, which the proxy preserves during forwarding.
 
 **Expected Behavior:**
-- ✅ With valid Codex CLI session: Requests succeed and return LLM responses
-- ❌ Without authentication: 401 Unauthorized from ChatGPT backend (expected)
-- ❌ With invalid/expired session: 401 Unauthorized from ChatGPT backend
+- ✅ **With valid Codex CLI session**: Requests succeed and return 200 + LLM responses
+- ❌ **Without authentication headers**: 401 Unauthorized from ChatGPT backend
+- ❌ **With invalid/expired session**: 401 Unauthorized from ChatGPT backend
+- ❌ **Backend routing issues**: 404 errors (indicates proxy/upstream config problems)
 
-**Testing:**
-- Use `OPENAI_BASE_URL=http://localhost:10000 codex` for authenticated requests
-- Direct curl requests without auth headers will return 401 (this is correct behavior)
+**Testing Guidelines:**
+- ✅ **Authenticated**: `OPENAI_BASE_URL=http://localhost:10000 codex "test"` → Should return 200 + LLM response
+- ❌ **Unauthenticated**: `curl -X POST http://localhost:10000/responses [...]` → Returns 401 (expected)
+- **Never expect 401 to mean "working"** - 401 means "no valid auth provided"
+
+**CRITICAL**: A working proxy should return 200 for authenticated Codex CLI requests. Getting 401 constantly means authentication forwarding is broken.
 
 ## Project Overview
 
 **Codex-Plus** is an HTTP proxy that intercepts Codex CLI requests to add power-user features (slash commands, hooks, MCP tools, persistent sessions) while maintaining identical UI/UX to Codex CLI.
 
 **Architecture**: FastAPI proxy using `curl_cffi` with Chrome impersonation to bypass Cloudflare and forward to ChatGPT backend.
+
+**Current Implementation**: The proxy now includes integrated LLM execution middleware that instructs Claude to natively execute slash commands by reading command definition files from `.codexplus/commands/` or `.claude/commands/` directories.
 
 ## Development Commands
 
@@ -58,26 +64,26 @@ pytest -k "test_name_pattern" -v           # Run pattern-matched tests
 ./proxy.sh disable                         # Stop proxy
 
 # Manual server start (for debugging)
-uvicorn main:app --host 127.0.0.1 --port 3000 --reload  # With reload
+uvicorn main:app --host 127.0.0.1 --port 10000 --reload  # With reload
 ```
 
 ### Usage with Codex CLI
 ```bash
 # Set environment variable to use proxy
-export OPENAI_BASE_URL=http://localhost:3000
+export OPENAI_BASE_URL=http://localhost:10000
 codex  # Now uses proxy
 
 # Or one-time usage
-OPENAI_BASE_URL=http://localhost:3000 codex
+OPENAI_BASE_URL=http://localhost:10000 codex
 ```
 
 ### Testing and Validation
 ```bash
 # Health check
-curl http://localhost:3000/health
+curl http://localhost:10000/health
 
 # Test proxy forwarding manually
-curl -X POST http://localhost:3000/v1/chat/completions \
+curl -X POST http://localhost:10000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your_token" \
   -d '{"model": "claude-3", "messages": [{"role": "user", "content": "test"}]}'
@@ -85,23 +91,33 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 
 ## Architecture Details
 
-### Current Implementation (M1 - Simple Passthrough Proxy)
-- **Entry Point**: `main.py` - FastAPI application with single proxy route
-- **Startup**: Via `proxy.sh` or `uvicorn main:app --host 127.0.0.1 --port 3000`
-- **Control**: `proxy.sh` - Process management (start/stop/status/restart)
-- **Testing**: `test_proxy.py` - Comprehensive TDD test suite (11 tests)
+### Current Implementation (M2 - Slash Command Processing + Proxy)
+- **Entry Point**: `src/codex_plus/main.py` - Thin re-export wrapper
+- **Core Application**: `src/codex_plus/main_sync_cffi.py` - FastAPI with integrated LLM execution middleware
+- **Middleware**: `src/codex_plus/llm_execution_middleware.py` - Instructs Claude to execute slash commands natively
+- **Request Logging**: `src/codex_plus/request_logger.py` - Async logging for debugging
+- **Startup**: Via `proxy.sh` or `uvicorn src.codex_plus.main:app --host 127.0.0.1 --port 10000`
+- **Control**: `proxy.sh` - Enhanced process management with health checks and cleanup
+- **Testing**: Comprehensive test suite in `tests/` directory with CI/CD integration
 
 ### Request Flow
-1. Codex CLI → HTTP proxy (localhost:3000) 
-2. Proxy forwards to `https://chatgpt.com/backend-api/codex` with preserved headers/streaming
-3. Response streams back through proxy to Codex CLI
-4. Special handling: `/health` endpoint returns local status (not forwarded)
+1. Codex CLI → HTTP proxy (localhost:10000)
+2. **LLM Execution Middleware** detects slash commands and injects execution instructions
+3. Modified request forwarded to `https://chatgpt.com/backend-api/codex` with preserved headers/streaming
+4. Claude receives instructions to natively execute slash commands by reading `.codexplus/commands/*.md` files
+5. Response streams back through proxy to Codex CLI
+6. Special handling: `/health` endpoint returns local status (not forwarded)
 
 ### Key Components
 - **Streaming Support**: `curl_cffi.requests.Session(impersonate="chrome124").request(..., stream=True)` with `iter_content` preserves real-time responses
+- **Slash Command Detection**: Regex pattern matching for `/command` syntax in request bodies
+- **Command File Resolution**: Searches `.codexplus/commands/` then `.claude/commands/` for command definitions
+- **LLM Instruction Injection**: Modifies requests to instruct Claude to execute commands natively
+- **Security Validation**: SSRF protection, header sanitization, upstream URL validation
 - **Header Management**: Filters hop-by-hop headers, preserves auth/content headers  
 - **Error Passthrough**: HTTP errors (401, 429, 500) forwarded transparently
-- **Process Management**: PID-based daemon control via `proxy.sh`
+- **Process Management**: Enhanced PID-based daemon control via `proxy.sh` with health checks
+- **Async Request Logging**: Branch-specific debugging logs in `/tmp/codex_plus/`
 
 ## Development Milestones
 
@@ -111,17 +127,21 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 - Complete TDD test coverage (request forwarding, streaming, errors)
 - Process management and health monitoring
 
-### 🚧 M2: Slash Command Processing (Next)
-- Intercept and parse `/command` syntax before forwarding
-- Implement core commands: `/help`, `/status`, `/quit`, `/save`
-- Maintain non-slash input passthrough behavior
-- Add command discovery and execution framework
+### ✅ M2: Slash Command Processing (Complete)
+- ✅ Intercept and parse `/command` syntax in request bodies
+- ✅ LLM execution middleware that instructs Claude to natively execute commands
+- ✅ Command file resolution from `.codexplus/commands/` and `.claude/commands/`
+- ✅ Advanced slash commands like `/copilot` for autonomous PR processing
+- ✅ Maintain non-slash input passthrough behavior
+- ✅ Security validation and SSRF protection
 
-### 📋 M3: Hook System (Planned)
-- Pre-input hooks: modify prompts before sending to API  
-- Post-output hooks: process responses after receiving from API
-- Configurable hook chains and conditional execution
-- Hook state persistence across sessions
+### 🚧 M3: Enhanced Features (In Progress)
+- ✅ Async request logging for debugging
+- ✅ Branch-specific log organization
+- ✅ Enhanced security validation (header sanitization, upstream URL validation)
+- ✅ Comprehensive test coverage expansion
+- 🚧 Hook system integration
+- 📋 Advanced command templating
 
 ### 📋 M4: MCP Integration (Planned)
 - Remote MCP tool discovery and invocation
@@ -131,15 +151,41 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 ## File Structure
 ```
 codex_plus/
-├── main.py           # FastAPI proxy application
-├── proxy.sh          # Process control script  
-├── test_proxy.py     # TDD test suite
-├── requirements.txt  # Python dependencies
-├── proxy.log         # Runtime logs
-├── proxy.pid         # Process ID file
-├── README.md         # Project documentation
-├── product_spec.md   # User stories and acceptance criteria
-└── .claude/          # Slash commands and configurations
+├── src/codex_plus/              # Main package
+│   ├── __init__.py
+│   ├── main.py                  # Thin re-export wrapper
+│   ├── main_sync_cffi.py        # Core FastAPI proxy with middleware
+│   ├── llm_execution_middleware.py  # LLM execution middleware
+│   └── request_logger.py        # Async request logging
+├── tests/                       # Comprehensive test suite
+│   ├── conftest.py
+│   ├── test_proxy.py            # Core proxy tests
+│   ├── test_enhanced_slash_middleware.py
+│   ├── test_llm_execution.py
+│   ├── test_request_logger.py
+│   └── ...
+├── .codexplus/                  # Primary slash commands
+│   ├── commands/
+│   │   ├── copilot.md           # Autonomous PR processing
+│   │   ├── echo.md
+│   │   ├── hello.md
+│   │   └── test-args.md
+│   └── hooks/
+│       └── inject_marker.py    # Hook examples
+├── .github/workflows/           # CI/CD
+│   └── tests.yml
+├── docs/                        # Documentation
+│   ├── codex_request_structure.json
+│   ├── CODEX_ANALYSIS_REPORT.md
+│   └── testing/
+├── infrastructure-scripts/      # Deployment helpers
+├── proxy.sh                     # Enhanced process control script
+├── run_tests.sh                 # Local CI simulation
+├── requirements.txt             # Python dependencies
+├── README.md                    # Project documentation
+├── product_spec.md             # User stories and acceptance criteria
+├── design.md                   # Architecture design
+└── CLAUDE.md                   # This file - AI assistant guidance
 ```
 
 ## Testing Strategy
@@ -148,20 +194,28 @@ codex_plus/
 
 ### Test Categories
 - **Core Request Interception**: Verify forwarding behavior for different endpoints
+- **LLM Execution Middleware**: Test slash command detection and instruction injection
+- **Security Validation**: SSRF protection, header sanitization, upstream URL validation
 - **Streaming Response Types**: Test JSON, SSE, binary streaming preservation
 - **Error Conditions**: Ensure 401, 404, 429, 500 errors pass through correctly  
 - **Special Cases**: Local `/health` endpoint handling
+- **Async Request Logging**: Branch-specific logging functionality
+- **Integration Tests**: End-to-end testing with real commands
 
 ### Test Execution
 ```bash
 # Run full test suite (required before commits)
-pytest test_proxy.py -v
+./run_tests.sh                    # Local CI simulation
+pytest -v                         # All tests
+pytest tests/test_proxy.py -v     # Core proxy tests
+pytest tests/test_enhanced_slash_middleware.py -v  # Middleware tests
 
 # Run with coverage
-pytest test_proxy.py --cov=main --cov-report=html -v
+pytest --cov=src/codex_plus --cov-report=html -v
 
-# Run specific test matrices
-pytest test_proxy.py::TestSimplePassthroughProxy::test_request_forwarding -v
+# Run specific test patterns
+pytest -k "test_slash_command" -v
+pytest -k "test_security" -v
 ```
 
 ## Implementation Guidelines
@@ -170,32 +224,43 @@ pytest test_proxy.py::TestSimplePassthroughProxy::test_request_forwarding -v
 - **FastAPI**: Use async/await for all I/O operations
 - **Error Handling**: Always preserve upstream HTTP status codes and messages
 - **Streaming**: Use `curl_cffi` streaming via `iter_content` for real-time response handling
+- **Middleware Pattern**: LLM execution middleware for request modification
 - **Logging**: Use structured logging for debugging and monitoring
+- **Package Structure**: Proper Python package layout under `src/codex_plus/`
 
 ### Security Considerations  
-- **Header Filtering**: Remove hop-by-hop headers to prevent header injection
-- **Input Validation**: Validate slash commands and parameters before processing
-- **API Key Handling**: Never log or expose API keys in proxy responses
+- **SSRF Protection**: Validate upstream URLs and prevent internal network access
+- **Header Sanitization**: Remove dangerous headers and prevent header injection
+- **Input Validation**: Validate slash commands, paths, and content-length
+- **Path Traversal Prevention**: Block attempts to access unauthorized paths
+- **Content Size Limits**: Enforce request size limits (10MB default)
 - **Process Isolation**: Run proxy with minimal required permissions
 
 ### Debugging
 ```bash
-# View real-time logs
-tail -f proxy.log
+# View real-time logs (enhanced locations)
+tail -f /tmp/codex_plus/proxy.log
+tail -f /tmp/codex_plus/<branch>/request_payload.json
 
 # Debug with verbose logging
-PYTHONPATH=. uvicorn main:app --host 127.0.0.1 --port 3000 --log-level debug
+PYTHONPATH=src uvicorn src.codex_plus.main:app --host 127.0.0.1 --port 10000 --log-level debug
 
-# Test connectivity
-curl -v http://localhost:3000/health
+# Test connectivity and health
+curl -v http://localhost:10000/health
+./proxy.sh status
+
+# Test slash command detection
+echo '{"input": [{"type": "message", "content": [{"type": "input_text", "text": "/copilot"}]}]}' | \
+  curl -X POST http://localhost:10000/responses -H "Content-Type: application/json" -d @-
 ```
 
 ## Integration Notes
 
 ### Claude Code CLI Compatibility
-- Slash commands follow Claude Code CLI conventions (`/help`, `/status`, `/save`)
-- MCP tools integration matches Claude Code CLI behavior patterns
-- Hook system designed for Claude Code CLI workflow compatibility
+- LLM execution middleware instructs Claude to natively execute slash commands
+- Command definitions stored in `.codexplus/commands/` and `.claude/commands/`
+- Advanced commands like `/copilot` for autonomous PR processing
+- Maintains identical UI/UX to Codex CLI while adding power-user features
 
 ### Hooks Lifecycle (Anthropic-Aligned)
 - Events supported: UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop, PreCompact, SessionStart, SessionEnd
@@ -219,25 +284,30 @@ curl -v http://localhost:3000/health
 
 ### Environment Variables
 ```bash
-export OPENAI_BASE_URL=http://localhost:3000  # Route Codex through proxy
-export PYTHONPATH=.                           # For local module imports
+export OPENAI_BASE_URL=http://localhost:10000  # Route Codex through proxy
+export PYTHONPATH=src                          # For package imports
+export NO_NETWORK=1                           # CI simulation mode
 ```
 
 ### Development Workflow
-1. **Feature Planning**: Update milestone tracking in README.md
-2. **TDD Implementation**: Write failing tests first
+1. **Feature Planning**: Update milestone tracking in CLAUDE.md
+2. **TDD Implementation**: Write failing tests first using `./run_tests.sh`
 3. **Code Implementation**: Implement minimal code to pass tests
-4. **Integration Testing**: Test with actual Codex CLI
-5. **Documentation**: Update CLAUDE.md and product_spec.md as needed
+4. **Security Review**: Ensure SSRF protection and input validation
+5. **Integration Testing**: Test with actual Codex CLI and slash commands
+6. **Documentation**: Update CLAUDE.md and architecture documentation
 
 ## Future Considerations
 
 ### Scalability
-- Multi-user session management (post-M1)
-- Load balancing and rate limiting (if needed)
-- Persistent session storage (M3/M4)
+- Multi-user session management and isolation
+- Load balancing and rate limiting for production use
+- Persistent session storage and state management
+- Horizontal scaling with multiple proxy instances
 
 ### Extensions
 - Plugin system for custom slash commands
-- Integration with development environment tools
-- Advanced hook scripting capabilities
+- Advanced hook scripting with pre/post processing
+- Integration with development environment tools (IDEs, CI/CD)
+- Real-time collaboration features
+- WebSocket support for enhanced streaming
