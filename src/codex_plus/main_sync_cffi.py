@@ -224,7 +224,6 @@ async def proxy(request: Request, path: str):
     except Exception as e:
         logger.error(f"❌ Middleware failed for {path}: {e}")
         # Fallback to basic proxy behavior
-        from fastapi.responses import JSONResponse
         return JSONResponse({"error": f"Middleware error: {str(e)}"}, status_code=500)
 
     # ✅ SAFE TO MODIFY: Post-output hook processing
