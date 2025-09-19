@@ -247,9 +247,9 @@ BEGIN EXECUTION NOW:
                         content_list = item.get("content", [])
                         for content_item in content_list:
                             if isinstance(content_item, dict) and content_item.get("type") == "input_text":
-                                original = content_item.get("text", "")
-                                # Prepend instruction as a hidden context
-                                content_item["text"] = f"[SYSTEM: {execution_instruction}]\n\n{original}"
+                                current_text = content_item.get("text", "")
+                                # Prepend instruction while preserving any existing modifications (like hook context)
+                                content_item["text"] = f"[SYSTEM: {execution_instruction}]\n\n{current_text}"
                                 logger.info("💉 Injected execution instruction into input text")
                                 break
                         break
