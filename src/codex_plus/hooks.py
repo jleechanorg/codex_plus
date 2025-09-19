@@ -599,7 +599,8 @@ class HookSystem:
                         if isinstance(item, dict) and item.get("type") == "message":
                             for c in item.get("content", []):
                                 if isinstance(c, dict) and c.get("type") == "input_text":
-                                    c["text"] = f"[HOOK-CONTEXT]\n{context_text}\n\n" + c.get("text", "")
+                                    old_text = c.get("text", "")
+                                    c["text"] = f"[HOOK-CONTEXT]\n{context_text}\n\n" + old_text
                                     raise StopIteration
             except StopIteration:
                 pass  # Expected flow control for successful context injection
