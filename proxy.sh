@@ -1,10 +1,35 @@
 #!/bin/bash
 
+# 🚨🚨🚨 CRITICAL PROXY CONTROL SCRIPT - HANDLE WITH EXTREME CARE 🚨🚨🚨
+#
+# ⚠️  THIS SCRIPT MANAGES THE CORE CODEX PROXY SERVICE ⚠️
+#
+# 🔒 PROTECTED COMPONENTS (DO NOT MODIFY):
+# - PROXY_MODULE variable (must remain "main_sync_cffi")
+# - Python module imports and uvicorn startup command
+# - Port 10000 configuration for Codex compatibility
+# - Process management and PID handling
+#
+# ✅ SAFE TO MODIFY:
+# - Log file locations and formatting
+# - Status display messages and colors
+# - Health check functionality
+# - Process cleanup logic
+#
+# ❌ CRITICAL WARNINGS:
+# - DO NOT change the proxy module name
+# - DO NOT modify the port (must be 10000)
+# - DO NOT alter the Python startup command structure
+# - DO NOT remove curl_cffi or chrome124 impersonation
+#
+# Breaking these rules WILL prevent Codex from connecting to the proxy.
+
 # Codex-Plus Simple Proxy Control Script
 # Usage: ./proxy.sh [enable|disable|status|restart]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PATH="$SCRIPT_DIR/venv"
+# 🔒 CRITICAL: This module name MUST NOT be changed - contains curl_cffi proxy logic
 PROXY_MODULE="main_sync_cffi"
 # Runtime files under /tmp/codex_plus
 RUNTIME_DIR="/tmp/codex_plus"
@@ -142,12 +167,15 @@ start_proxy() {
 
     export PYTHONPATH="$SCRIPT_DIR/src:$PYTHONPATH"
 
-    # Start with proper process isolation (macOS compatible)
+    # 🚨🚨🚨 CRITICAL PROXY STARTUP COMMAND - DO NOT MODIFY 🚨🚨🚨
+    # ⚠️ This command starts the curl_cffi proxy with Cloudflare bypass ⚠️
+    # ❌ FORBIDDEN: Changing module, host, port, or import structure
     nohup python -c "
 import sys, os
 try:
     from codex_plus.$PROXY_MODULE import app
     import uvicorn
+    # 🔒 PROTECTED: Port 10000 required for Codex compatibility
     uvicorn.run(app, host='127.0.0.1', port=10000, log_level='info')
 except Exception as e:
     print(f'STARTUP_ERROR: {e}', file=sys.stderr)

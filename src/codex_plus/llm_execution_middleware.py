@@ -1,6 +1,35 @@
 """
 LLM Execution Middleware - Instructs LLM to execute slash commands natively
 Instead of expanding commands to their content, this tells the LLM to read and execute them
+
+🚨🚨🚨 WARNING: CONTAINS CRITICAL PROXY FORWARDING LOGIC 🚨🚨🚨
+
+⚠️  CORE PROXY FORWARDING - EXTREME CAUTION REQUIRED ⚠️
+
+This middleware contains the critical curl_cffi proxy forwarding logic that
+enables Codex to bypass Cloudflare and communicate with ChatGPT backend.
+
+🔒 PROTECTED COMPONENTS (DO NOT TOUCH):
+- curl_cffi session configuration
+- Request forwarding to upstream_url
+- Authentication header handling
+- Streaming response logic
+- Chrome impersonation settings
+
+✅ SAFE TO MODIFY:
+- Slash command detection and processing
+- Command file reading logic
+- LLM instruction injection
+- Hook integration points
+
+❌ FORBIDDEN MODIFICATIONS:
+- Changing curl_cffi to any other HTTP client
+- Modifying upstream URL handling
+- Altering authentication forwarding
+- Removing Chrome impersonation
+- Breaking streaming response handling
+
+Breaking these rules WILL break all Codex functionality.
 """
 import json
 import logging
@@ -286,14 +315,17 @@ BEGIN EXECUTION NOW:
 
         # Apply security header sanitization
         clean_headers = _sanitize_headers(clean_headers)
-        
+
+        # 🚨🚨🚨 CRITICAL PROXY FORWARDING SECTION - DO NOT MODIFY 🚨🚨🚨
+        # ⚠️ This is the HEART of Codex proxy functionality ⚠️
+        # ❌ FORBIDDEN: Any changes to curl_cffi, session, or request handling
         try:
-            # Use synchronous curl_cffi with Chrome impersonation
+            # 🔒 PROTECTED: curl_cffi Chrome impersonation - REQUIRED for Cloudflare bypass
             if not hasattr(self, '_session'):
                 self._session = requests.Session(impersonate="chrome124")
             session = self._session
-            
-            # Make the request with streaming
+
+            # 🔒 PROTECTED: Core request forwarding - DO NOT CHANGE
             response = session.request(
                 request.method,
                 target_url,
@@ -303,17 +335,18 @@ BEGIN EXECUTION NOW:
                 timeout=30
             )
             
-            # Stream the response back
+            # 🔒 PROTECTED: Streaming response generator - CRITICAL for real-time responses
             def stream_response():
-                # Check if we have a status line to inject
+                # ✅ SAFE TO MODIFY: Status line injection logic
                 status_line_injected = False
                 try:
                     # Check for status line from request state
                     status_line = getattr(request.state, 'status_line', None) if hasattr(request, 'state') else None
 
+                    # 🔒 PROTECTED: Core streaming iteration - DO NOT MODIFY
                     for chunk in response.iter_content(chunk_size=None):
                         if chunk:
-                            # Inject status line before first content chunk
+                            # ✅ SAFE TO MODIFY: Status line injection customization
                             if not status_line_injected and status_line:
                                 # Format like official Claude Code status line (simple, clean format)
                                 status_content = f"{status_line}\n\n"
@@ -321,6 +354,7 @@ BEGIN EXECUTION NOW:
                                 status_line_injected = True
                                 logger.info(f"✅ Status line injected into stream: {status_line}")
 
+                            # 🔒 PROTECTED: Chunk yielding - DO NOT REMOVE
                             yield chunk
                 except Exception as e:
                     logger.error(f"Error during streaming: {e}")
