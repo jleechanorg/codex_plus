@@ -4,6 +4,7 @@ Request logging utilities for debugging and monitoring
 import json
 import logging
 import asyncio
+import aiofiles
 from pathlib import Path
 from typing import Optional
 
@@ -21,8 +22,12 @@ class RequestLogger:
 
         try:
             # Schedule async logging without blocking
-            loop = asyncio.get_event_loop()
-            loop.create_task(RequestLogger._log_payload_to_file_async(body))
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(RequestLogger._log_payload_to_file_async(body))
+            except RuntimeError:
+                # No running event loop, run the coroutine to completion
+                asyncio.run(RequestLogger._log_payload_to_file_async(body))
         except Exception as e:
             logger.error(f"Failed to log request payload: {e}")
 
@@ -45,48 +50,42 @@ class RequestLogger:
         if not branch or ".." in branch or "/" in branch:
             branch = "unknown"
 
-        payload = json.loads(body)
-        logger.info(f"Parsed payload with keys: {list(payload.keys())}")
+        # Parse JSON with specific error handling
+        try:
+            payload = json.loads(body)
+            logger.info(f"Parsed payload with keys: {list(payload.keys())}")
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON in request body: {e}")
+            return
+        except Exception as e:
+            logger.error(f"Unexpected error parsing JSON: {e}")
+            return
 
         # Create directory with branch name - async
         log_dir = Path(f"/tmp/codex_plus/{branch}")
         try:
-            # Use asyncio for directory creation
-            proc = await asyncio.create_subprocess_exec(
-                "mkdir", "-p", str(log_dir),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
-            )
-            await proc.wait()
-        except Exception:
-            pass  # Best effort logging
+            # Create directory asynchronously using asyncio.to_thread
+            await asyncio.to_thread(log_dir.mkdir, parents=True, exist_ok=True)
+        except Exception as e:
+            logger.debug(f"Failed to create log directory: {e}")
+            return  # Cannot proceed without directory
 
-        # Write files asynchronously using async file operations
+        # Write files asynchronously using aiofiles
         try:
             # Write payload file
             log_file = log_dir / "request_payload.json"
             payload_content = json.dumps(payload, indent=2)
-            proc = await asyncio.create_subprocess_exec(
-                "tee", str(log_file),
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
-            )
-            await proc.communicate(input=payload_content.encode())
+
+            async with aiofiles.open(log_file, 'w') as f:
+                await f.write(payload_content)
             logger.info(f"Logged full payload to {log_file}")
 
             # Also log instructions if available
-            if "instructions" in payload:
+            if "instructions" in payload and isinstance(payload["instructions"], str):
                 instructions_file = log_dir / "instructions.txt"
-                proc = await asyncio.create_subprocess_exec(
-                    "tee", str(instructions_file),
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL
-                )
-                await proc.communicate(input=payload["instructions"].encode())
+                async with aiofiles.open(instructions_file, 'w') as f:
+                    await f.write(payload["instructions"])
                 logger.info(f"Logged instructions to {instructions_file}")
         except Exception as e:
             logger.debug(f"Async file logging failed: {e}")
-            # Fallback: best-effort logging without blocking
-            pass
+            # Best effort logging - don't raise exceptions

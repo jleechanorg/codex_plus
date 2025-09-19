@@ -39,4 +39,3 @@ jobs:
           NO_NETWORK: '1'
         run: |
           pytest -q
-# Test comment $(date)
