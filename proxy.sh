@@ -142,8 +142,8 @@ start_proxy() {
 
     export PYTHONPATH="$SCRIPT_DIR/src:$PYTHONPATH"
 
-    # Start with proper process isolation
-    setsid nohup python -c "
+    # Start with proper process isolation (macOS compatible)
+    nohup python -c "
 import sys, os
 try:
     from codex_plus.$PROXY_MODULE import app
