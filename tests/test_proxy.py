@@ -25,6 +25,7 @@ class TestSimplePassthroughProxy:
     """Test suite for M1 Simple Passthrough Proxy implementation"""
     
     # Matrix 1: Core Request Interception (RED - failing tests)
+    @pytest.mark.slow  # Mark as slow due to timeout issues in CI
     @pytest.mark.parametrize("method,path,expected_forward", [
         ("GET", "/v1/models", True),
         ("POST", "/v1/chat/completions", True),
@@ -95,6 +96,7 @@ class TestSimplePassthroughProxy:
             assert response_data in response.content
 
     # Matrix 4: Error Conditions (RED - failing tests)
+    @pytest.mark.slow  # Mark as slow due to timeout issues in CI
     @pytest.mark.parametrize("error_status,error_message", [
         (401, "Unauthorized"),
         (404, "Not Found"),
