@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import re
+from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
@@ -229,19 +230,28 @@ BEGIN EXECUTION NOW:
         
         # Forward to upstream
         target_url = f"{self.upstream_url}/{path.lstrip('/')}"
-        
+
+        # Validate upstream URL using security function
+        from .main_sync_cffi import _validate_upstream_url, _sanitize_headers
+        if not _validate_upstream_url(target_url):
+            logger.error(f"Blocked request to invalid upstream URL: {target_url}")
+            return JSONResponse({"error": "Invalid upstream URL"}, status_code=400)
+
         # Remove hop-by-hop headers that shouldn't be forwarded
         hop_by_hop = {
-            'connection', 'keep-alive', 'proxy-authenticate', 
-            'proxy-authorization', 'te', 'trailers', 
+            'connection', 'keep-alive', 'proxy-authenticate',
+            'proxy-authorization', 'te', 'trailers',
             'transfer-encoding', 'upgrade', 'host'
         }
-        
+
         # Clean headers for forwarding
         clean_headers = {}
         for k, v in headers.items():
             if k.lower() not in hop_by_hop:
                 clean_headers[k] = v
+
+        # Apply security header sanitization
+        clean_headers = _sanitize_headers(clean_headers)
         
         try:
             # Use synchronous curl_cffi with Chrome impersonation
