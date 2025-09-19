@@ -5,3 +5,4 @@ PyYAML>=6.0
 requests>=2.31
 pytest>=7.0
 httpx>=0.24
+aiofiles>=24.1.0
