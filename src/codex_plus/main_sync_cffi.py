@@ -56,7 +56,7 @@ def _sanitize_headers(headers: dict) -> dict:
     }
 
     return {k: v for k, v in headers.items()
-            if k.lower() not in dangerous_headers and not k.startswith('x-forwarded-')}
+            if k.lower() not in dangerous_headers and not k.lower().startswith('x-forwarded-')}
 
 def _validate_upstream_url(url: str) -> bool:
     """Validate that upstream URL is allowed"""
