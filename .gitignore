@@ -73,3 +73,4 @@ proxy.pid
 
 # Codex Plus temp artifacts
 /.codex_tmp/
+.serena/
