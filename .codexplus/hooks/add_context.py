@@ -7,7 +7,9 @@ priority: 50
 enabled: true
 """
 import json, sys
-print(json.dumps({
-  "hookSpecificOutput": {"hookEventName":"UserPromptSubmit", "additionalContext": "CTX-123"}
-}))
-sys.exit(0)
+
+if __name__ == "__main__":
+    print(json.dumps({
+      "hookSpecificOutput": {"hookEventName":"UserPromptSubmit", "additionalContext": "CTX-123"}
+    }))
+    sys.exit(0)
