@@ -23,7 +23,7 @@ class TestLLMExecutionMiddleware:
             ("/test auth.py", [("test", "auth.py")]),
             ("/search TODO", [("search", "TODO")]),
             ("/git status", [("git", "status")]),
-            ("/explain /refactor code", [("explain", "/refactor code")]),
+            ("/explain /refactor code", [("explain", ""), ("refactor", "code")]),
             ("Run /test and then /lint", [("test", "and then"), ("lint", "")]),
         ]
 

@@ -53,3 +53,20 @@ def test_no_injection_when_no_slash_command():
     modified = mw.inject_execution_behavior(data)
     # Should be identical when no slash command present
     assert modified == data
+
+
+def test_multiple_slash_commands_detection():
+    """Test the fix for multi-command parsing bug"""
+    mw: LLMExecutionMiddleware = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
+
+    # Test cases that were failing before the fix
+    test_cases = [
+        ("/cmd1 arg /cmd2 arg", [("cmd1", "arg"), ("cmd2", "arg")]),
+        ("/copilot /fixpr", [("copilot", ""), ("fixpr", "")]),
+        ("/echo hello /test-args arg1 arg2", [("echo", "hello"), ("test-args", "arg1 arg2")]),
+        ("/cmd1 some args /cmd2 /cmd3 final", [("cmd1", "some args"), ("cmd2", ""), ("cmd3", "final")])
+    ]
+
+    for text, expected in test_cases:
+        commands = mw.detect_slash_commands(text)
+        assert commands == expected, f"Failed for input '{text}': expected {expected}, got {commands}"
