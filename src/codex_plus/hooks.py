@@ -434,9 +434,10 @@ class HookSystem:
                 continue
             elif in_metadata:
                 stripped = line.strip()
-                if stripped and not stripped.startswith(('name:', 'type:', 'priority:', 'enabled:')):
-                    break  # End of metadata section
                 if stripped:
+                    # Stop parsing if we hit non-metadata content (no colon)
+                    if ':' not in stripped:
+                        break
                     metadata_lines.append(stripped)
 
         if not metadata_lines:
@@ -451,13 +452,20 @@ class HookSystem:
             key = key.strip()
             value = value.strip()
 
-            # Convert values to appropriate types
+            # Convert values to appropriate types with error handling
             if value.lower() in ('true', 'false'):
                 config[key] = value.lower() == 'true'
-            elif value.isdigit():
-                config[key] = int(value)
             else:
-                config[key] = value
+                # Try integer conversion
+                try:
+                    config[key] = int(value)
+                except ValueError:
+                    # Try float conversion
+                    try:
+                        config[key] = float(value)
+                    except ValueError:
+                        # Keep as string
+                        config[key] = value
 
         # Ensure we have the required fields
         if 'name' in config and 'type' in config:
