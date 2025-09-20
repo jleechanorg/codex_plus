@@ -354,26 +354,32 @@ class HookSystem:
         return hook_class(file_path.stem, config)
     
     def _parse_frontmatter(self, content: str) -> Optional[Dict[str, Any]]:
-        """Parse YAML frontmatter from file content"""
+        """Parse YAML frontmatter or Python docstring metadata from file content"""
         lines = content.splitlines()
-        
+
         if len(lines) < 3:
             return None
-            
+
+        # Try Python docstring metadata format first (new format)
+        docstring_config = self._parse_docstring_metadata(content)
+        if docstring_config:
+            return docstring_config
+
+        # Fall back to YAML frontmatter format (legacy format)
         # Check for frontmatter delimiter
         if lines[0].strip() != '---':
             return None
-        
+
         # Find end of frontmatter
         end_index = -1
         for i, line in enumerate(lines[1:], 1):
             if line.strip() == '---':
                 end_index = i
                 break
-        
+
         if end_index == -1:
             return None
-        
+
         # Extract and parse YAML
         yaml_content = '\n'.join(lines[1:end_index])
         try:
@@ -381,28 +387,110 @@ class HookSystem:
         except yaml.YAMLError as e:
             logger.error(f"YAML parsing error: {e}")
             return None
-    
-    def _extract_python_code(self, content: str) -> Optional[str]:
-        """Extract Python code from content after YAML frontmatter"""
+
+    def _parse_docstring_metadata(self, content: str) -> Optional[Dict[str, Any]]:
+        """Parse metadata from Python docstring in new format"""
+        import re
         lines = content.splitlines()
-        
+
+        if len(lines) < 5:
+            return None
+
+        # Look for a docstring starting after shebang
+        docstring_start = -1
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped == '"""':
+                docstring_start = i
+                break
+
+        if docstring_start == -1:
+            return None
+
+        # Find the end of the docstring
+        docstring_end = -1
+        for i, line in enumerate(lines[docstring_start + 1:], docstring_start + 1):
+            if line.strip() == '"""':
+                docstring_end = i
+                break
+
+        if docstring_end == -1:
+            return None
+
+        # Extract content between the docstring delimiters
+        docstring_lines = lines[docstring_start + 1:docstring_end]
+        docstring_content = '\n'.join(docstring_lines)
+
+        # Look for "Hook Metadata:" section
+        if "Hook Metadata:" not in docstring_content:
+            return None
+
+        # Parse the metadata section
+        metadata_lines = []
+        in_metadata = False
+        for line in docstring_lines:
+            if line.strip() == "Hook Metadata:":
+                in_metadata = True
+                continue
+            elif in_metadata:
+                stripped = line.strip()
+                if stripped and not stripped.startswith(('name:', 'type:', 'priority:', 'enabled:')):
+                    break  # End of metadata section
+                if stripped:
+                    metadata_lines.append(stripped)
+
+        if not metadata_lines:
+            return None
+
+        # Parse the metadata lines into a dict
+        config = {}
+        for line in metadata_lines:
+            if ':' not in line:
+                continue
+            key, value = line.split(':', 1)
+            key = key.strip()
+            value = value.strip()
+
+            # Convert values to appropriate types
+            if value.lower() in ('true', 'false'):
+                config[key] = value.lower() == 'true'
+            elif value.isdigit():
+                config[key] = int(value)
+            else:
+                config[key] = value
+
+        # Ensure we have the required fields
+        if 'name' in config and 'type' in config:
+            return config
+        else:
+            return None
+
+    def _extract_python_code(self, content: str) -> Optional[str]:
+        """Extract Python code from content (handles both YAML frontmatter and Python docstring formats)"""
+        lines = content.splitlines()
+
         if len(lines) < 3:
-            return content  # No frontmatter, return as-is
-            
-        # Check for frontmatter delimiter
+            return content  # Short content, return as-is
+
+        # Check if this is the new Python docstring format (starts with shebang and has docstring)
+        if lines[0].strip().startswith('#!') and '"""' in content:
+            # For Python docstring format, the entire file is valid Python code
+            return content
+
+        # Check for YAML frontmatter delimiter (legacy format)
         if lines[0].strip() != '---':
             return content  # No frontmatter, return as-is
-        
+
         # Find end of frontmatter
         end_index = -1
         for i, line in enumerate(lines[1:], 1):
             if line.strip() == '---':
                 end_index = i
                 break
-        
+
         if end_index == -1:
             return content  # No valid frontmatter end, return as-is
-        
+
         # Return everything after the frontmatter
         python_lines = lines[end_index + 1:]
         return '\n'.join(python_lines)
