@@ -81,20 +81,10 @@ class LLMExecutionMiddleware:
             # Find where this command's arguments end
             if i + 1 < len(command_positions):
                 next_start, _, _ = command_positions[i + 1]
-                # Check what's between this command and the next
-                between = text[end:next_start]
-                words_between = len(between.strip().split()) if between.strip() else 0
-
-                if words_between >= 2:  # Multiple words = separate command
-                    args = between.strip()
-                else:
-                    # Few/no words = include everything as arguments
-                    args = text[end:].strip()
-                    # Consumed all remaining text, stop processing
-                    commands.append((command, args))
-                    break
+                # Arguments are everything between this command and the next command
+                args = text[end:next_start].strip()
             else:
-                # Last command
+                # Last command - arguments are everything remaining
                 args = text[end:].strip()
 
             commands.append((command, args))
