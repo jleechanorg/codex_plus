@@ -69,7 +69,7 @@ proxy.log
 proxy.pid
 
 # Claude Code configurations (contains secrets and user-specific settings)
-.claude/
+# .claude/ - removed to track statusline configuration
 
 # Codex Plus temp artifacts
 /.codex_tmp/
