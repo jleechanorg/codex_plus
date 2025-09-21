@@ -112,6 +112,35 @@ print_status() {
 start_proxy() {
     echo -e "${BLUE}🚀 Starting M1 Simple Passthrough Proxy...${NC}"
 
+    # Create a lock file to prevent concurrent starts
+    local lock_file="$RUNTIME_DIR/proxy.lock"
+    local lock_timeout=10
+
+    # Try to acquire lock with timeout
+    local lock_acquired=false
+    for ((i=0; i<lock_timeout; i++)); do
+        if (set -C; echo $$ > "$lock_file") 2>/dev/null; then
+            lock_acquired=true
+            break
+        fi
+        echo -e "${YELLOW}⏳ Waiting for lock (attempt $((i+1))/$lock_timeout)...${NC}"
+        sleep 1
+    done
+
+    if [ "$lock_acquired" = false ]; then
+        echo -e "${RED}❌ Failed to acquire lock after ${lock_timeout}s${NC}"
+        return 1
+    fi
+
+    # Ensure lock is released on exit
+    trap 'rm -f "$lock_file"' EXIT
+
+    # Check if already running (after acquiring lock)
+    if print_status >/dev/null 2>&1; then
+        echo -e "${YELLOW}⚠️  Proxy is already running${NC}"
+        return 0
+    fi
+
     # Kill existing proxy processes instead of waiting for locks
     echo -e "${YELLOW}🔄 Checking for existing proxy processes...${NC}"
 
@@ -136,9 +165,6 @@ start_proxy() {
 
     # Also kill any uvicorn processes that might be related
     pkill -f "uvicorn.*codex_plus" 2>/dev/null || true
-
-    # Clean up any stale lock files
-    rm -f "$RUNTIME_DIR/proxy.lock" 2>/dev/null
 
     # Final check - if still running, force kill everything
     if lsof -i :10000 >/dev/null 2>&1; then

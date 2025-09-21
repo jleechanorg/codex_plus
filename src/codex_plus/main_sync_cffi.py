@@ -52,14 +52,14 @@ async def lifespan(app: FastAPI):
             await settings_session_start(None, source="startup")
         except Exception as e:
             logger.error(f"Failed to execute session start hooks: {e}")
-        
+
         # Start background status line updates
         try:
             await hook_middleware.start_background_status_update()
             logger.info("🚀 Started background status line updates")
         except Exception as e:
             logger.error(f"Failed to start background status updates: {e}")
-        
+
         yield
     finally:
         # Session end hooks

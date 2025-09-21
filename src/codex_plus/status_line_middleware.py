@@ -56,7 +56,7 @@ class HookMiddleware:
                     await self._cache_task
                 except asyncio.CancelledError:
                     pass
-            
+
             self._cache_task = asyncio.create_task(self._background_update_loop())
             logger.info("🔄 Started background status line update task")
 
@@ -79,15 +79,15 @@ class HookMiddleware:
         """Update the cached status line"""
         if not self.enable_git_status or not self.hook_manager:
             return
-        
+
         async with self._cache_lock:
             try:
                 # Use the configurable hook system's run_status_line method with timeout
                 result = await asyncio.wait_for(
-                    self.hook_manager.run_status_line(), 
+                    self.hook_manager.run_status_line(),
                     timeout=2.0
                 )
-                
+
                 if result:
                     # Only log occasionally to reduce spam
                     logger.debug("🎯 Git Status Line updated in background")
