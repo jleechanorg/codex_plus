@@ -189,7 +189,10 @@ BEGIN EXECUTION NOW:
     
     def inject_execution_behavior(self, request_body: Dict) -> Dict:
         """Modify request to inject execution behavior"""
-        
+
+        # Get status line from request state if available
+        status_line = getattr(self.current_request.state, 'status_line', None) if hasattr(self, 'current_request') and hasattr(self.current_request, 'state') else None
+
         # Detect slash commands in the user's message
         commands = []
         
@@ -214,21 +217,33 @@ BEGIN EXECUTION NOW:
                     if detected:
                         commands.extend(detected)
         
-        # If we found slash commands, inject execution instructions
+        # Build injection content
+        injection_parts = []
+
+        # Add status line if available
+        if status_line:
+            injection_parts.append(f"IMPORTANT: Always start your response with this status line exactly as shown: {status_line}")
+            logger.info(f"📌 Will inject status line: {status_line}")
+
+        # Add execution instructions if needed
         if commands:
             logger.info(f"🎯 Detected slash commands: {commands}")
-            
             execution_instruction = self.create_execution_instruction(commands)
-            
+            injection_parts.append(execution_instruction)
+
+        # If we have content to inject
+        if injection_parts:
+            combined_instruction = "\n\n".join(injection_parts)
+
             # Inject as system message at the beginning
             if "messages" in request_body:
                 # Standard format - insert system message
                 request_body["messages"].insert(0, {
                     "role": "system",
-                    "content": execution_instruction
+                    "content": combined_instruction
                 })
-                logger.info("💉 Injected execution instruction as system message")
-                
+                logger.info("💉 Injected status line and/or execution instruction as system message")
+
             elif "input" in request_body:
                 # Codex format - modify the first message or add instruction
                 # We'll prepend the instruction to the user's message
@@ -239,8 +254,8 @@ BEGIN EXECUTION NOW:
                             if isinstance(content_item, dict) and content_item.get("type") == "input_text":
                                 current_text = content_item.get("text", "")
                                 # Prepend instruction while preserving any existing modifications (like hook context)
-                                content_item["text"] = f"[SYSTEM: {execution_instruction}]\n\n{current_text}"
-                                logger.info("💉 Injected execution instruction into input text")
+                                content_item["text"] = f"[SYSTEM: {combined_instruction}]\n\n{current_text}"
+                                logger.info("💉 Injected status line and/or execution instruction into input text")
                                 break
                         break
         
@@ -250,7 +265,10 @@ BEGIN EXECUTION NOW:
         """Process request with execution behavior injection"""
         from fastapi.responses import StreamingResponse
         from curl_cffi import requests
-        
+
+        # Store request for status line access
+        self.current_request = request
+
         # Check if pre-input hooks modified the body
         if hasattr(request.state, 'modified_body'):
             body = request.state.modified_body
@@ -258,7 +276,7 @@ BEGIN EXECUTION NOW:
         else:
             body = await request.body()
         headers = dict(request.headers)
-        
+
         # Only process if we have a JSON body
         if body:
             try:
@@ -327,23 +345,10 @@ BEGIN EXECUTION NOW:
             
             # 🔒 PROTECTED: Streaming response generator - CRITICAL for real-time responses
             def stream_response():
-                # ✅ SAFE TO MODIFY: Status line injection logic
-                status_line_injected = False
                 try:
-                    # Check for status line from request state
-                    status_line = getattr(request.state, 'status_line', None) if hasattr(request, 'state') else None
-
                     # 🔒 PROTECTED: Core streaming iteration - DO NOT MODIFY
                     for chunk in response.iter_content(chunk_size=None):
                         if chunk:
-                            # ✅ SAFE TO MODIFY: Status line injection customization
-                            if not status_line_injected and status_line:
-                                # Format like official Claude Code status line (simple, clean format)
-                                status_content = f"{status_line}\n\n"
-                                yield status_content.encode('utf-8')
-                                status_line_injected = True
-                                logger.info(f"✅ Status line injected into stream: {status_line}")
-
                             # 🔒 PROTECTED: Chunk yielding - DO NOT REMOVE
                             yield chunk
                 except Exception as e:
