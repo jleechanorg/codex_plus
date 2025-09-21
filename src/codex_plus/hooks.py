@@ -259,7 +259,10 @@ class HookSystem:
             return await asyncio.wait_for(self._git_status_line_fallback_impl(), timeout=2.0)
         except Exception:
             # Return simple fallback if anything fails
-            return "[Dir: codex_plus | Local: current-branch | Remote: origin/branch | PR: unknown]"
+            # Add light blue coloring even to fallback
+            light_blue = "\033[94m"  # Light blue ANSI color
+            reset = "\033[0m"        # Reset color
+            return f"{light_blue}[Dir: codex_plus | Local: current-branch | Remote: origin/branch | PR: unknown]{reset}"
 
     async def _git_status_line_fallback_impl(self) -> Optional[str]:
         """Implementation of git status line fallback with faster timeouts"""
@@ -314,7 +317,10 @@ class HookSystem:
         except Exception:
             pass
 
-        return f"[Dir: {repo} | Local: {br}{status} | Remote: origin/{br} | PR: {pr_info}]"
+        # Add light blue coloring like Claude Code CLI
+        light_blue = "\033[94m"  # Light blue ANSI color
+        reset = "\033[0m"        # Reset color
+        return f"{light_blue}[Dir: {repo} | Local: {br}{status} | Remote: origin/{br} | PR: {pr_info}]{reset}"
     
     def _load_hook_from_file(self, file_path: Path) -> Optional[Hook]:
         """Load a single hook from a Python file"""
