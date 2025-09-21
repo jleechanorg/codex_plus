@@ -327,11 +327,23 @@ BEGIN EXECUTION NOW:
             
             # 🔒 PROTECTED: Streaming response generator - CRITICAL for real-time responses
             def stream_response():
-                # ✅ SAFE TO MODIFY: Status line injection logic (REMOVED - Claude Code handles status lines natively)
+                # ✅ SAFE TO MODIFY: Status line injection logic
+                status_line_injected = False
                 try:
+                    # Check for status line from request state
+                    status_line = getattr(request.state, 'status_line', None) if hasattr(request, 'state') else None
+
                     # 🔒 PROTECTED: Core streaming iteration - DO NOT MODIFY
                     for chunk in response.iter_content(chunk_size=None):
                         if chunk:
+                            # ✅ SAFE TO MODIFY: Status line injection customization
+                            if not status_line_injected and status_line:
+                                # Format like official Claude Code status line (simple, clean format)
+                                status_content = f"{status_line}\n\n"
+                                yield status_content.encode('utf-8')
+                                status_line_injected = True
+                                logger.info(f"✅ Status line injected into stream: {status_line}")
+
                             # 🔒 PROTECTED: Chunk yielding - DO NOT REMOVE
                             yield chunk
                 except Exception as e:

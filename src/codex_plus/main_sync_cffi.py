@@ -41,7 +41,7 @@ import os
 import time
 import re
 from urllib.parse import urlparse
-# Status line middleware removed - Claude Code CLI handles status lines natively
+from .status_line_middleware import HookMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -138,7 +138,7 @@ from .hooks import (
 )
 
 # ✅ SAFE TO MODIFY: Hook middleware configuration and extensions
-# Status line middleware removed - Claude Code CLI handles status lines natively via .claude/settings.json
+hook_middleware = HookMiddleware(hook_manager=hook_system)
 
 @app.get("/health")
 async def health():
@@ -200,8 +200,18 @@ async def proxy(request: Request, path: str):
     from .request_logger import RequestLogger
     RequestLogger.log_request_payload(body, path)
 
-    # ✅ SAFE TO MODIFY: Hook processing
-    # Note: Status line handling removed - Claude Code CLI handles status lines natively via .claude/settings.json
+    # ✅ SAFE TO MODIFY: Hook processing and status line handling
+    # Get status line and store it in request context for middleware to use
+    try:
+        status_line = await hook_middleware.get_status_line()
+        if status_line:
+            logger.info(f"📍 Storing status line for injection: {status_line}")
+            # Store status line in request state for middleware to access
+            if hasattr(request, 'state'):
+                request.state.status_line = status_line
+            logger.info("✅ Status line stored for middleware injection")
+    except Exception as e:
+        logger.error(f"Status line storage failed: {e}")
 
     # 🔒 PROTECTED: Core middleware call - DO NOT MODIFY 🔒
     # ❌ CRITICAL: This handles curl_cffi forwarding to ChatGPT backend
