@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "SlashCommand/.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"event\": \"PostToolUse\", \"tool\": \"TOOL_NAME\", \"status\": \"completed\"}'",
+            "timeout": 2
+          }
+        ]
+      }
+    ]
+  }
+}

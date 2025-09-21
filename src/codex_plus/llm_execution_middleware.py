@@ -1,6 +1,35 @@
 """
 LLM Execution Middleware - Instructs LLM to execute slash commands natively
 Instead of expanding commands to their content, this tells the LLM to read and execute them
+
+🚨🚨🚨 WARNING: CONTAINS CRITICAL PROXY FORWARDING LOGIC 🚨🚨🚨
+
+⚠️  CORE PROXY FORWARDING - EXTREME CAUTION REQUIRED ⚠️
+
+This middleware contains the critical curl_cffi proxy forwarding logic that
+enables Codex to bypass Cloudflare and communicate with ChatGPT backend.
+
+🔒 PROTECTED COMPONENTS (DO NOT TOUCH):
+- curl_cffi session configuration
+- Request forwarding to upstream_url
+- Authentication header handling
+- Streaming response logic
+- Chrome impersonation settings
+
+✅ SAFE TO MODIFY:
+- Slash command detection and processing
+- Command file reading logic
+- LLM instruction injection
+- Hook integration points
+
+❌ FORBIDDEN MODIFICATIONS:
+- Changing curl_cffi to any other HTTP client
+- Modifying upstream URL handling
+- Altering authentication forwarding
+- Removing Chrome impersonation
+- Breaking streaming response handling
+
+Breaking these rules WILL break all Codex functionality.
 """
 import json
 import logging
@@ -39,14 +68,28 @@ class LLMExecutionMiddleware:
     def detect_slash_commands(self, text: str) -> List[Tuple[str, str]]:
         """Detect slash commands in text and return (command, args) tuples"""
         commands = []
-        # Match commands at start of line or after whitespace
-        pattern = r'(?:^|\s)/([A-Za-z0-9_-]+)(?:\s+([^\n/]*))?'
-        
-        for match in re.finditer(pattern, text):
-            command = match.group(1)
-            args = match.group(2) or ""
-            commands.append((command, args.strip()))
-            
+
+        # Find all /command positions
+        command_positions = []
+        for match in re.finditer(r'(?:^|\s)/([A-Za-z0-9_-]+)', text):
+            command_positions.append((match.start(), match.end(), match.group(1)))
+
+        i = 0
+        while i < len(command_positions):
+            start, end, command = command_positions[i]
+
+            # Find where this command's arguments end
+            if i + 1 < len(command_positions):
+                next_start, _, _ = command_positions[i + 1]
+                # Arguments are everything between this command and the next command
+                args = text[end:next_start].strip()
+            else:
+                # Last command - arguments are everything remaining
+                args = text[end:].strip()
+
+            commands.append((command, args))
+            i += 1
+
         return commands
     
     def find_command_file(self, command_name: str) -> Optional[Path]:
@@ -111,9 +154,14 @@ Available slash commands and their behaviors:
                 # Read first few lines of command file for context
                 try:
                     with open(command_file, 'r') as f:
-                        lines = f.readlines()[:5]
-                        preview = ''.join(lines).strip()
-                        if preview:
+                        preview_lines = []
+                        for _ in range(5):
+                            line = f.readline()
+                            if not line:
+                                break
+                            preview_lines.append(line.rstrip())
+                        if preview_lines:
+                            preview = '\n'.join(preview_lines)
                             instruction += f"\n  - Preview: {preview[:100]}..."
                 except:
                     pass
@@ -189,9 +237,9 @@ BEGIN EXECUTION NOW:
                         content_list = item.get("content", [])
                         for content_item in content_list:
                             if isinstance(content_item, dict) and content_item.get("type") == "input_text":
-                                original = content_item.get("text", "")
-                                # Prepend instruction as a hidden context
-                                content_item["text"] = f"[SYSTEM: {execution_instruction}]\n\n{original}"
+                                current_text = content_item.get("text", "")
+                                # Prepend instruction while preserving any existing modifications (like hook context)
+                                content_item["text"] = f"[SYSTEM: {execution_instruction}]\n\n{current_text}"
                                 logger.info("💉 Injected execution instruction into input text")
                                 break
                         break
@@ -200,10 +248,15 @@ BEGIN EXECUTION NOW:
     
     async def process_request(self, request, path: str):
         """Process request with execution behavior injection"""
-        from fastapi.responses import StreamingResponse, JSONResponse
+        from fastapi.responses import StreamingResponse
         from curl_cffi import requests
         
-        body = await request.body()
+        # Check if pre-input hooks modified the body
+        if hasattr(request.state, 'modified_body'):
+            body = request.state.modified_body
+            logger.info("Using modified body from pre-input hooks")
+        else:
+            body = await request.body()
         headers = dict(request.headers)
         
         # Only process if we have a JSON body
@@ -252,14 +305,17 @@ BEGIN EXECUTION NOW:
 
         # Apply security header sanitization
         clean_headers = _sanitize_headers(clean_headers)
-        
+
+        # 🚨🚨🚨 CRITICAL PROXY FORWARDING SECTION - DO NOT MODIFY 🚨🚨🚨
+        # ⚠️ This is the HEART of Codex proxy functionality ⚠️
+        # ❌ FORBIDDEN: Any changes to curl_cffi, session, or request handling
         try:
-            # Use synchronous curl_cffi with Chrome impersonation
+            # 🔒 PROTECTED: curl_cffi Chrome impersonation - REQUIRED for Cloudflare bypass
             if not hasattr(self, '_session'):
                 self._session = requests.Session(impersonate="chrome124")
             session = self._session
-            
-            # Make the request with streaming
+
+            # 🔒 PROTECTED: Core request forwarding - DO NOT CHANGE
             response = session.request(
                 request.method,
                 target_url,
@@ -269,11 +325,26 @@ BEGIN EXECUTION NOW:
                 timeout=30
             )
             
-            # Stream the response back
+            # 🔒 PROTECTED: Streaming response generator - CRITICAL for real-time responses
             def stream_response():
+                # ✅ SAFE TO MODIFY: Status line injection logic
+                status_line_injected = False
                 try:
+                    # Check for status line from request state
+                    status_line = getattr(request.state, 'status_line', None) if hasattr(request, 'state') else None
+
+                    # 🔒 PROTECTED: Core streaming iteration - DO NOT MODIFY
                     for chunk in response.iter_content(chunk_size=None):
                         if chunk:
+                            # ✅ SAFE TO MODIFY: Status line injection customization
+                            if not status_line_injected and status_line:
+                                # Format like official Claude Code status line (simple, clean format)
+                                status_content = f"{status_line}\n\n"
+                                yield status_content.encode('utf-8')
+                                status_line_injected = True
+                                logger.info(f"✅ Status line injected into stream: {status_line}")
+
+                            # 🔒 PROTECTED: Chunk yielding - DO NOT REMOVE
                             yield chunk
                 except Exception as e:
                     logger.error(f"Error during streaming: {e}")
