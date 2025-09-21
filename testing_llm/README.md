@@ -76,7 +76,8 @@ Each test file can be executed independently:
 # Navigate to the test directory
 cd /Users/jleechan/projects_other/codex_plus/test_llm/
 
-# Execute a specific test (using LLM)
+# Execute a specific test (using LLM with proxy)
+export OPENAI_BASE_URL=http://localhost:10000
 codex exec --yolo "Follow the step-by-step instructions in 01_basic_proxy_test.md"
 ```
 
@@ -86,6 +87,7 @@ Execute tests in sequence for comprehensive validation:
 
 ```bash
 # Run all tests in order
+export OPENAI_BASE_URL=http://localhost:10000
 for test_file in 01_basic_proxy_test.md 02_hook_integration.md 03_streaming_test.md 04_error_handling.md 05_performance_test.md 06_end_to_end.md; do
     echo "Executing $test_file..."
     codex exec --yolo "Follow all instructions in $test_file and report results"
@@ -100,7 +102,7 @@ done
 - **Git repository** (for git-related functionality)
 - **FastAPI and dependencies** installed (`pip install -r requirements.txt`)
 - **curl_cffi** library (critical for proxy functionality)
-- **Port 3000 available** for proxy server
+- **Port 10000 available** for proxy server
 
 ### Environment Setup
 ```bash
@@ -115,12 +117,21 @@ pip install -r requirements.txt
 
 # Verify proxy script is executable
 chmod +x ./proxy.sh
+
+# Start the proxy on port 10000
+./proxy.sh start
+
+# CRITICAL: Set environment variable for codex exec routing
+export OPENAI_BASE_URL=http://localhost:10000
+
+# Verify proxy is working
+curl -s http://localhost:10000/health
 ```
 
 ### Execution Context
 - Tests assume execution from project root directory
 - Git repository should be in working state
-- No other services should be using port 3000
+- No other services should be using port 10000
 - Sufficient disk space for logs and temporary files
 
 ## Key Features Being Tested
@@ -169,7 +180,7 @@ chmod +x ./proxy.sh
 ### Proxy Won't Start
 ```bash
 # Check port availability
-lsof -i :3000
+lsof -i :10000
 
 # Verify dependencies
 pip list | grep -E "(fastapi|curl_cffi|uvicorn)"

@@ -15,12 +15,12 @@ Test proxy performance under basic load conditions and verify the system remains
 ```bash
 # Test single request latency
 echo "Testing baseline request latency..."
-curl -X POST http://localhost:3000/health \
+curl -X POST http://localhost:10000/health \
   -w "Connect: %{time_connect}s\nTTFB: %{time_starttransfer}s\nTotal: %{time_total}s\n" \
   -o /dev/null -s
 
 # Test with JSON processing
-curl -X POST http://localhost:3000/responses \
+curl -X POST http://localhost:10000/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dummy_token" \
   -d '{"input": [{"type": "message", "content": [{"type": "input_text", "text": "baseline test"}]}]}' \
@@ -47,7 +47,7 @@ def make_request(request_id):
     start = time.time()
     try:
         response = requests.post(
-            'http://localhost:3000/responses',
+            'http://localhost:10000/responses',
             json={
                 'input': [{
                     'type': 'message',
@@ -132,7 +132,7 @@ def load_generator():
     for i in range(20):
         try:
             requests.post(
-                'http://localhost:3000/responses',
+                'http://localhost:10000/responses',
                 json={
                     'input': [{
                         'type': 'message',
@@ -232,7 +232,7 @@ def measure_request_time():
     start = time.time()
     try:
         response = requests.post(
-            'http://localhost:3000/responses',
+            'http://localhost:10000/responses',
             json={'input': [{'type': 'message', 'content': [{'type': 'input_text', 'text': 'perf test'}]}]},
             headers={'Authorization': 'Bearer dummy_token'},
             timeout=5
@@ -333,7 +333,7 @@ for size_kb in payload_sizes:
     start = time.time()
     try:
         response = requests.post(
-            'http://localhost:3000/responses',
+            'http://localhost:10000/responses',
             json=payload,
             headers={'Authorization': 'Bearer dummy_token'},
             timeout=10
@@ -369,7 +369,7 @@ import concurrent.futures
 def make_request(i):
     try:
         requests.post(
-            'http://localhost:3000/responses',
+            'http://localhost:10000/responses',
             json={'input': [{'type': 'message', 'content': [{'type': 'input_text', 'text': f'cleanup test {i}'}]}]},
             headers={'Authorization': 'Bearer dummy_token'},
             timeout=2
@@ -430,7 +430,7 @@ rm -f .codexplus/hooks/perf_test.py
 
 # Verify clean startup
 sleep 3
-curl http://localhost:3000/health
+curl http://localhost:10000/health
 ```
 
 **Expected Result**:

@@ -24,7 +24,7 @@ cd /Users/jleechan/projects_other/codex_plus
 ```
 
 **Expected Result**:
-- Server starts on localhost:3000
+- Server starts on localhost:10000
 - Status shows "Running" with PID
 - No error messages in the console
 
@@ -32,7 +32,7 @@ cd /Users/jleechan/projects_other/codex_plus
 
 ```bash
 # Test health endpoint
-curl -v http://localhost:3000/health
+curl -v http://localhost:10000/health
 ```
 
 **Expected Result**:
@@ -46,7 +46,7 @@ curl -v http://localhost:3000/health
 
 ```bash
 # Test basic request forwarding (expect 401 since no auth)
-curl -X POST http://localhost:3000/v1/chat/completions \
+curl -X POST http://localhost:10000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dummy_token" \
   -d '{

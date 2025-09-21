@@ -15,7 +15,7 @@ Test that the proxy handles various error conditions gracefully without crashing
 ```bash
 # Test behavior when upstream is unreachable (simulate network issue)
 # First, check normal behavior
-curl -X POST http://localhost:3000/responses \
+curl -X POST http://localhost:10000/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dummy_token" \
   -d '{"input": [{"type": "message", "content": [{"type": "input_text", "text": "test"}]}]}' \
@@ -36,13 +36,13 @@ grep -i "connection\|timeout\|error" proxy.log | tail -5
 
 ```bash
 # Test with invalid JSON
-curl -X POST http://localhost:3000/responses \
+curl -X POST http://localhost:10000/responses \
   -H "Content-Type: application/json" \
   -d '{"invalid": json, syntax}' \
   -w "\nHTTP code: %{http_code}\n"
 
 # Test with empty body
-curl -X POST http://localhost:3000/responses \
+curl -X POST http://localhost:10000/responses \
   -H "Content-Type: application/json" \
   -d '' \
   -w "\nHTTP code: %{http_code}\n"
@@ -82,7 +82,7 @@ EOF
 sleep 3
 
 # Make request to trigger hook error
-curl -X POST http://localhost:3000/responses \
+curl -X POST http://localhost:10000/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dummy_token" \
   -d '{"input": [{"type": "message", "content": [{"type": "input_text", "text": "trigger error"}]}]}'
@@ -148,7 +148,7 @@ print('Added failing command hook')
 sleep 3
 
 # Trigger the failing hook
-curl -X POST http://localhost:3000/responses \
+curl -X POST http://localhost:10000/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dummy_token" \
   -d '{"input": [{"type": "message", "content": [{"type": "input_text", "text": "test failing hook"}]}]}'
@@ -204,7 +204,7 @@ payload = {
 
 try:
     response = requests.post(
-        'http://localhost:3000/responses',
+        'http://localhost:10000/responses',
         json=payload,
         headers={'Authorization': 'Bearer dummy_token'},
         timeout=10
@@ -268,7 +268,7 @@ mv .git_backup .git 2>/dev/null || true
 
 # Make several error-triggering requests
 for i in {1..3}; do
-    curl -X POST http://localhost:3000/responses \
+    curl -X POST http://localhost:10000/responses \
       -H "Content-Type: application/json" \
       -d "{invalid json $i}" \
       --connect-timeout 2 &
@@ -281,7 +281,7 @@ sleep 2
 ./proxy.sh status
 
 # Test normal request still works
-curl -X POST http://localhost:3000/health
+curl -X POST http://localhost:10000/health
 ```
 
 **Expected Result**:
@@ -332,7 +332,7 @@ if settings_path.exists():
 ./proxy.sh restart
 
 # Verify health
-curl http://localhost:3000/health
+curl http://localhost:10000/health
 ```
 
 **Expected Result**:
