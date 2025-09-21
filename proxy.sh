@@ -35,6 +35,11 @@ PROXY_MODULE="main_sync_cffi"
 RUNTIME_DIR="/tmp/codex_plus"
 PID_FILE="$RUNTIME_DIR/proxy.pid"
 LOG_FILE="$RUNTIME_DIR/proxy.log"
+# Autostart configuration
+AUTOSTART_LABEL="com.codex.plus.proxy"
+LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
+LAUNCHD_SCRIPT="$SCRIPT_DIR/scripts/proxy_launchd.sh"
+CRONTAB_ENTRY="@reboot cd $SCRIPT_DIR && ./proxy.sh enable"
 
 # Colors for output
 RED='\033[0;31m'
@@ -301,6 +306,164 @@ restart_proxy() {
     start_proxy
 }
 
+ensure_launchd_script() {
+    if [ -x "$LAUNCHD_SCRIPT" ]; then
+        return 0
+    fi
+    echo -e "${YELLOW}⚠️  Launchd helper script missing, creating $LAUNCHD_SCRIPT${NC}"
+    mkdir -p "$(dirname "$LAUNCHD_SCRIPT")"
+    cat <<'EOF' > "$LAUNCHD_SCRIPT"
+#!/bin/bash
+# Launchd-friendly proxy runner that keeps the uvicorn process in the foreground
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_PATH="$SCRIPT_DIR/venv"
+
+if [ ! -d "$VENV_PATH" ]; then
+  echo "Virtualenv missing at $VENV_PATH" >&2
+  exit 1
+fi
+
+cd "$SCRIPT_DIR"
+source "$VENV_PATH/bin/activate"
+EXTRA_PYTHONPATH="$SCRIPT_DIR/src"
+if [ -n "${PYTHONPATH:-}" ]; then
+  export PYTHONPATH="$EXTRA_PYTHONPATH:$PYTHONPATH"
+else
+  export PYTHONPATH="$EXTRA_PYTHONPATH"
+fi
+
+exec python -c "
+import sys
+from codex_plus.main_sync_cffi import app
+import uvicorn
+uvicorn.run(app, host='127.0.0.1', port=10000, log_level='info')
+"
+EOF
+    chmod +x "$LAUNCHD_SCRIPT"
+}
+
+install_launchd() {
+    ensure_launchd_script
+    mkdir -p "$(dirname "$LAUNCH_AGENT_PATH")"
+    cat <<EOF > "$LAUNCH_AGENT_PATH"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>$AUTOSTART_LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>$LAUNCHD_SCRIPT</string>
+    </array>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/codex_plus/launchd.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/codex_plus/launchd.err</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+  </dict>
+</plist>
+EOF
+    launchctl unload "$LAUNCH_AGENT_PATH" >/dev/null 2>&1 || true
+    launchctl load "$LAUNCH_AGENT_PATH"
+    launchctl start "$AUTOSTART_LABEL" >/dev/null 2>&1 || true
+    echo -e "${GREEN}✅ LaunchAgent installed at $LAUNCH_AGENT_PATH${NC}"
+}
+
+remove_launchd() {
+    if [ -f "$LAUNCH_AGENT_PATH" ]; then
+        launchctl unload "$LAUNCH_AGENT_PATH" >/dev/null 2>&1 || true
+        rm -f "$LAUNCH_AGENT_PATH"
+        echo -e "${GREEN}✅ LaunchAgent removed${NC}"
+    else
+        echo -e "${YELLOW}ℹ️  No LaunchAgent plist found${NC}"
+    fi
+}
+
+status_launchd() {
+    if [ ! -f "$LAUNCH_AGENT_PATH" ]; then
+        echo -e "${YELLOW}ℹ️  LaunchAgent not configured${NC}"
+        return 1
+    fi
+    if launchctl list "$AUTOSTART_LABEL" >/dev/null 2>&1; then
+        echo -e "${GREEN}✅ LaunchAgent loaded (${AUTOSTART_LABEL})${NC}"
+        return 0
+    fi
+    echo -e "${YELLOW}⚠️  LaunchAgent plist exists but is not loaded${NC}"
+    return 1
+}
+
+install_cron() {
+    local cron_tmp
+    cron_tmp=$(mktemp)
+    { crontab -l 2>/dev/null || true; } > "$cron_tmp"
+    if grep -Fq "$CRONTAB_ENTRY" "$cron_tmp"; then
+        echo -e "${YELLOW}ℹ️  Crontab entry already present${NC}"
+        rm -f "$cron_tmp"
+        return 0
+    fi
+    printf "%s\n" "$CRONTAB_ENTRY" >> "$cron_tmp"
+    crontab "$cron_tmp"
+    rm -f "$cron_tmp"
+    echo -e "${GREEN}✅ Crontab autostart installed${NC}"
+}
+
+remove_cron() {
+    local cron_tmp
+    cron_tmp=$(mktemp)
+    { crontab -l 2>/dev/null || true; } | grep -Fv "$CRONTAB_ENTRY" > "$cron_tmp"
+    crontab "$cron_tmp"
+    rm -f "$cron_tmp"
+    echo -e "${GREEN}✅ Crontab autostart removed (if it was present)${NC}"
+}
+
+status_cron() {
+    if crontab -l 2>/dev/null | grep -Fq "$CRONTAB_ENTRY"; then
+        echo -e "${GREEN}✅ Crontab autostart configured${NC}"
+        return 0
+    fi
+    echo -e "${YELLOW}ℹ️  Crontab autostart not configured${NC}"
+    return 1
+}
+
+handle_autostart() {
+    local action="${1:-enable}"
+    local os_name
+    os_name=$(uname -s)
+    case "$os_name" in
+        Darwin)
+            case "$action" in
+                enable|ensure) install_launchd ;;
+                disable) remove_launchd ;;
+                status) status_launchd ;;
+                *) echo -e "${RED}❌ Unknown autostart action: $action${NC}"; return 1 ;;
+            esac
+            ;;
+        Linux)
+            case "$action" in
+                enable|ensure) install_cron ;;
+                disable) remove_cron ;;
+                status) status_cron ;;
+                *) echo -e "${RED}❌ Unknown autostart action: $action${NC}"; return 1 ;;
+            esac
+            ;;
+        *)
+            echo -e "${RED}❌ Autostart not supported on $os_name${NC}"
+            return 1
+            ;;
+    esac
+}
+
 show_help() {
     echo -e "${BLUE}Codex-Plus Simple Proxy Control Script${NC}"
     echo ""
@@ -311,6 +474,8 @@ show_help() {
     echo -e "  ${GREEN}disable${NC}  Stop the proxy server"
     echo -e "  ${GREEN}status${NC}   Show proxy status"
     echo -e "  ${GREEN}restart${NC}  Restart the proxy server"
+    echo -e "  ${GREEN}autostart${NC} [enable|disable|status]"
+    echo -e "             Manage automatic startup (default: enable)"
     echo -e "  ${GREEN}help${NC}     Show this help message"
     echo ""
     echo "Examples:"
@@ -333,6 +498,9 @@ case "${1:-enable}" in
         ;;
     "restart")
         restart_proxy
+        ;;
+    "autostart")
+        handle_autostart "$2"
         ;;
     "help"|"-h"|"--help")
         show_help
