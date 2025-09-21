@@ -14,7 +14,7 @@ Test that streaming responses work correctly without context overflow and that h
 
 ```bash
 # Test with a streaming request (expect 401 but should handle streaming correctly)
-curl -X POST http://localhost:3000/responses \
+curl -X POST http://localhost:10000/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dummy_token" \
   -d '{
@@ -53,7 +53,7 @@ grep -i "request body modified" proxy.log | tail -3
 
 ```bash
 # Start a background request to trigger status line
-(curl -X POST http://localhost:3000/responses \
+(curl -X POST http://localhost:10000/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dummy_token" \
   -d '{
@@ -95,7 +95,7 @@ payload = {
 
 try:
     response = requests.post(
-        'http://localhost:3000/responses',
+        'http://localhost:10000/responses',
         json=payload,
         headers={'Authorization': 'Bearer dummy_token'},
         timeout=10
@@ -130,7 +130,7 @@ def make_request(i):
     }
     try:
         response = requests.post(
-            'http://localhost:3000/responses',
+            'http://localhost:10000/responses',
             json=payload,
             headers={'Authorization': 'Bearer dummy_token'},
             timeout=5
@@ -187,7 +187,7 @@ def stream_test():
     for i in range(10):
         try:
             requests.post(
-                'http://localhost:3000/responses',
+                'http://localhost:10000/responses',
                 json={'input': [{'type': 'message', 'content': [{'type': 'input_text', 'text': f'Stream test {i}' * 100}]}]},
                 headers={'Authorization': 'Bearer dummy_token'},
                 timeout=2

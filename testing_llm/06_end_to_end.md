@@ -160,7 +160,7 @@ grep -i "loaded.*hook\|settings hooks" proxy.log | tail -10
 echo "Testing complete request processing pipeline..."
 
 # Make a request that exercises the full pipeline
-curl -X POST http://localhost:3000/responses \
+curl -X POST http://localhost:10000/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dummy_token" \
   -d '{
@@ -233,7 +233,7 @@ print(f'Status line mode: {mode}')
 "
 
 # Verify status line appears during request processing
-curl -X POST http://localhost:3000/responses \
+curl -X POST http://localhost:10000/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dummy_token" \
   -d '{"input": [{"type": "message", "content": [{"type": "input_text", "text": "status line test"}]}]}' \
@@ -286,7 +286,7 @@ sleep 3
 # Make multiple requests to test recovery behavior
 echo "Making multiple requests to test recovery..."
 for i in {1..10}; do
-    curl -X POST http://localhost:3000/responses \
+    curl -X POST http://localhost:10000/responses \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer dummy_token" \
       -d "{\"input\": [{\"type\": \"message\", \"content\": [{\"type\": \"input_text\", \"text\": \"Recovery test $i\"}]}]}" \
@@ -304,7 +304,7 @@ echo "  Successful recoveries: $recovery_successes"
 echo "  Handled failures: $recovery_failures"
 
 # Verify server is still responsive
-curl -X POST http://localhost:3000/health
+curl -X POST http://localhost:10000/health
 ```
 
 **Expected Result**:
@@ -345,7 +345,7 @@ dev_requests=(
 
 for request in "${dev_requests[@]}"; do
     echo "Processing: $request"
-    curl -X POST http://localhost:3000/responses \
+    curl -X POST http://localhost:10000/responses \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer dummy_token" \
       -d "{\"input\": [{\"type\": \"message\", \"content\": [{\"type\": \"input_text\", \"text\": \"$request\"}]}]}" \
@@ -417,7 +417,7 @@ print(f'Hook system session ID: {hook_system.session_id}')
 "
 
 # Make request and check project context usage
-curl -X POST http://localhost:3000/responses \
+curl -X POST http://localhost:10000/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dummy_token" \
   -d '{"input": [{"type": "message", "content": [{"type": "input_text", "text": "Test project context integration"}]}]}' \
@@ -441,7 +441,7 @@ echo "Performing comprehensive system health check..."
 
 # Check proxy health
 echo "1. Proxy Health:"
-curl -s http://localhost:3000/health | python3 -m json.tool
+curl -s http://localhost:10000/health | python3 -m json.tool
 
 # Check process status
 echo -e "\n2. Process Status:"
@@ -485,7 +485,7 @@ print(f'Hook names: {hook_names}')
 
 # Final functionality test
 echo -e "\n6. Final Functionality Test:"
-final_response=$(curl -s -X POST http://localhost:3000/responses \
+final_response=$(curl -s -X POST http://localhost:10000/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dummy_token" \
   -d '{"input": [{"type": "message", "content": [{"type": "input_text", "text": "Final E2E health check"}]}]}')
@@ -553,7 +553,7 @@ print('Restored original settings')
 sleep 3
 
 echo "E2E cleanup completed. Final verification:"
-curl -s http://localhost:3000/health | python3 -m json.tool
+curl -s http://localhost:10000/health | python3 -m json.tool
 ./proxy.sh status
 ```
 

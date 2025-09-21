@@ -52,6 +52,14 @@ async def lifespan(app: FastAPI):
             await settings_session_start(None, source="startup")
         except Exception as e:
             logger.error(f"Failed to execute session start hooks: {e}")
+
+        # Start background status line updates
+        try:
+            await hook_middleware.start_background_status_update()
+            logger.info("🚀 Started background status line updates")
+        except Exception as e:
+            logger.error(f"Failed to start background status updates: {e}")
+
         yield
     finally:
         # Session end hooks
@@ -201,11 +209,11 @@ async def proxy(request: Request, path: str):
     RequestLogger.log_request_payload(body, path)
 
     # ✅ SAFE TO MODIFY: Hook processing and status line handling
-    # Get status line and store it in request context for middleware to use
+    # Get cached status line (non-blocking) - background task updates this
     try:
-        status_line = await hook_middleware.get_status_line()
+        status_line = hook_middleware.get_cached_status_line()
         if status_line:
-            logger.info(f"📍 Storing status line for injection: {status_line}")
+            logger.info(f"📍 Storing cached status line for injection: {status_line}")
             # Store status line in request state for middleware to access
             if hasattr(request, 'state'):
                 request.state.status_line = status_line
