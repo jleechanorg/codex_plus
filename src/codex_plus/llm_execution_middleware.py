@@ -225,7 +225,8 @@ BEGIN EXECUTION NOW:
 
         # Add status line if available
         if status_line:
-            injection_parts.append(f"IMPORTANT: Always start your response with exactly this format:\n\n{status_line}\n\nThen continue with your normal response. The status line MUST be separated by blank lines above and below.")
+            # Simple, direct instruction that Claude is more likely to follow
+            injection_parts.append(f"Display this status line first: {status_line}")
             logger.info(f"📌 Will inject status line: {status_line}")
 
         # Add execution instructions if needed
@@ -236,28 +237,55 @@ BEGIN EXECUTION NOW:
 
         # If we have content to inject
         if injection_parts:
-            combined_instruction = "\n\n".join(injection_parts)
+            # Split status line and execution instructions for different handling
+            status_line_instruction = None
+            execution_instructions = []
+
+            for part in injection_parts:
+                if part.startswith("Display this status line first:"):
+                    status_line_instruction = part
+                else:
+                    execution_instructions.append(part)
 
             # Inject as system message at the beginning
             if "messages" in request_body:
-                # Standard format - insert system message
-                request_body["messages"].insert(0, {
-                    "role": "system",
-                    "content": combined_instruction
-                })
+                # Standard format - insert system message for execution instructions only
+                if execution_instructions:
+                    combined_execution = "\n\n".join(execution_instructions)
+                    request_body["messages"].insert(0, {
+                        "role": "system",
+                        "content": combined_execution
+                    })
+
+                # Add status line instruction directly to user message
+                if status_line_instruction:
+                    for message in request_body["messages"]:
+                        if message.get("role") == "user":
+                            current_content = message.get("content", "")
+                            message["content"] = f"{status_line_instruction}\n\n{current_content}"
+                            break
+
                 logger.info("💉 Injected status line and/or execution instruction as system message")
 
             elif "input" in request_body:
-                # Codex format - modify the first message or add instruction
-                # We'll prepend the instruction to the user's message
+                # Codex format - handle status line and execution instructions separately
                 for item in request_body["input"]:
                     if isinstance(item, dict) and item.get("type") == "message":
                         content_list = item.get("content", [])
                         for content_item in content_list:
                             if isinstance(content_item, dict) and content_item.get("type") == "input_text":
                                 current_text = content_item.get("text", "")
-                                # Prepend instruction while preserving any existing modifications (like hook context)
-                                content_item["text"] = f"[SYSTEM: {combined_instruction}]\n\n{current_text}"
+
+                                # Add status line instruction directly as visible text
+                                if status_line_instruction:
+                                    current_text = f"{status_line_instruction}\n\n{current_text}"
+
+                                # Add execution instructions as system instruction
+                                if execution_instructions:
+                                    combined_execution = "\n\n".join(execution_instructions)
+                                    current_text = f"[SYSTEM: {combined_execution}]\n\n{current_text}"
+
+                                content_item["text"] = current_text
                                 logger.info("💉 Injected status line and/or execution instruction into input text")
                                 break
                         break
