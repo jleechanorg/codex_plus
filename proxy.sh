@@ -112,34 +112,49 @@ print_status() {
 start_proxy() {
     echo -e "${BLUE}🚀 Starting M1 Simple Passthrough Proxy...${NC}"
 
-    # Create a lock file to prevent concurrent starts
-    local lock_file="$RUNTIME_DIR/proxy.lock"
-    local lock_timeout=10
+    # Kill existing proxy processes instead of waiting for locks
+    echo -e "${YELLOW}🔄 Checking for existing proxy processes...${NC}"
 
-    # Try to acquire lock with timeout
-    local lock_acquired=false
-    for ((i=0; i<lock_timeout; i++)); do
-        if (set -C; echo $$ > "$lock_file") 2>/dev/null; then
-            lock_acquired=true
+    # Kill any existing proxy processes on port 10000 - multiple attempts
+    for attempt in 1 2 3; do
+        local existing_pids=$(lsof -ti :10000 2>/dev/null)
+        if [ -z "$existing_pids" ]; then
             break
         fi
-        echo -e "${YELLOW}⏳ Waiting for lock (attempt $((i+1))/$lock_timeout)...${NC}"
-        sleep 1
+
+        echo -e "${YELLOW}⚡ Attempt $attempt: Killing proxy processes: $existing_pids${NC}"
+
+        # Try TERM first, then KILL
+        if [ "$attempt" -le 2 ]; then
+            kill $existing_pids 2>/dev/null
+        else
+            kill -9 $existing_pids 2>/dev/null
+        fi
+
+        sleep 2
     done
 
-    if [ "$lock_acquired" = false ]; then
-        echo -e "${RED}❌ Failed to acquire lock after ${lock_timeout}s${NC}"
-        return 1
+    # Also kill any uvicorn processes that might be related
+    pkill -f "uvicorn.*codex_plus" 2>/dev/null || true
+
+    # Clean up any stale lock files
+    rm -f "$RUNTIME_DIR/proxy.lock" 2>/dev/null
+
+    # Final check - if still running, force kill everything
+    if lsof -i :10000 >/dev/null 2>&1; then
+        echo -e "${YELLOW}🔨 Force killing all processes on port 10000...${NC}"
+        lsof -ti :10000 2>/dev/null | xargs -r kill -9 2>/dev/null
+        sleep 3
+
+        # If STILL running, give up
+        if lsof -i :10000 >/dev/null 2>&1; then
+            echo -e "${RED}❌ Failed to stop existing proxy on port 10000${NC}"
+            lsof -i :10000
+            return 1
+        fi
     fi
 
-    # Ensure lock is released on exit
-    trap 'rm -f "$lock_file"' EXIT
-
-    # Check if already running (after acquiring lock)
-    if print_status >/dev/null 2>&1; then
-        echo -e "${YELLOW}⚠️  Proxy is already running${NC}"
-        return 0
-    fi
+    echo -e "${GREEN}✅ Port 10000 is now available${NC}"
 
     # Ensure runtime directory exists with proper permissions
     mkdir -p "$RUNTIME_DIR"
@@ -157,12 +172,7 @@ start_proxy() {
         return 1
     fi
 
-    # Check if port 10000 is available
-    if lsof -i :10000 >/dev/null 2>&1; then
-        echo -e "${RED}❌ Port 10000 is already in use${NC}"
-        lsof -i :10000
-        return 1
-    fi
+    # Port 10000 should now be available after cleanup above
 
     # Start proxy in background with enhanced error handling
     source "$VENV_PATH/bin/activate" || {
