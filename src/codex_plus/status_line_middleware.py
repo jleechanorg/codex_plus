@@ -77,7 +77,14 @@ class HookMiddleware:
 
     async def _update_status_cache(self):
         """Update the cached status line"""
-        if not self.enable_git_status or not self.hook_manager:
+        if not self.enable_git_status:
+            return
+
+        # If git status is enabled but no hook manager, set a basic fallback
+        if not self.hook_manager:
+            async with self._cache_lock:
+                if self._cached_status_line is None:
+                    self._cached_status_line = "[Dir: codex_plus | Local: current-branch | Remote: origin/branch | PR: unknown]"
             return
 
         async with self._cache_lock:
