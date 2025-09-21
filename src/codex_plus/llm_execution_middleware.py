@@ -42,7 +42,10 @@ logger = logging.getLogger(__name__)
 
 class LLMExecutionMiddleware:
     """Middleware that instructs LLM to execute slash commands like Claude Code CLI"""
-    
+
+    # Class-level lock to prevent race condition in session initialization
+    _session_init_lock = __import__('threading').Lock()
+
     def __init__(self, upstream_url: str):
         self.upstream_url = upstream_url
         self.claude_dir = self._find_claude_dir()
@@ -331,10 +334,7 @@ BEGIN EXECUTION NOW:
             # 🔒 PROTECTED: curl_cffi Chrome impersonation - REQUIRED for Cloudflare bypass
             # Thread-safe session creation with double-checked locking pattern
             if not hasattr(self, '_session'):
-                import threading
-                if not hasattr(self, '_session_lock'):
-                    self._session_lock = threading.Lock()
-                with self._session_lock:
+                with self._session_init_lock:
                     # Double-check pattern: verify session still doesn't exist after acquiring lock
                     if not hasattr(self, '_session'):
                         self._session = requests.Session(impersonate="chrome124")
