@@ -133,22 +133,31 @@ curl -X POST http://localhost:10000/v1/chat/completions \
 
 ### Request Flow
 1. Codex CLI → HTTP proxy (localhost:10000)
-2. **LLM Execution Middleware** detects slash commands and injects execution instructions
-3. Modified request forwarded to `https://chatgpt.com/backend-api/codex` with preserved headers/streaming
-4. Claude receives instructions to natively execute slash commands by reading `.codexplus/commands/*.md` files
-5. Response streams back through proxy to Codex CLI
-6. Special handling: `/health` endpoint returns local status (not forwarded)
+2. **Pre-input Hooks** process request body and apply UserPromptSubmit lifecycle hooks
+3. **LLM Execution Middleware** detects slash commands and injects execution instructions
+4. **Status Line Middleware** prepares git status information for injection
+5. Modified request forwarded to `https://chatgpt.com/backend-api/codex` with preserved headers/streaming
+6. **Status Line** injected at start of response stream if available
+7. Claude receives instructions to natively execute slash commands by reading `.codexplus/commands/*.md` files
+8. **Post-output Hooks** process streaming response (non-blocking)
+9. Response streams back through proxy to Codex CLI
+10. **Hook Side Effects** execute Stop hooks and other lifecycle events
+11. Special handling: `/health` endpoint returns local status (not forwarded)
 
 ### Key Components
 - **Streaming Support**: `curl_cffi.requests.Session(impersonate="chrome124").request(..., stream=True)` with `iter_content` preserves real-time responses
 - **Slash Command Detection**: Regex pattern matching for `/command` syntax in request bodies
 - **Command File Resolution**: Searches `.codexplus/commands/` then `.claude/commands/` for command definitions
 - **LLM Instruction Injection**: Modifies requests to instruct Claude to execute commands natively
+- **Hook System**: Comprehensive lifecycle event support (UserPromptSubmit, PreToolUse, PostToolUse, Stop, etc.)
+- **Status Line Middleware**: Git status injection with configurable hooks and async subprocess calls
 - **Security Validation**: SSRF protection, header sanitization, upstream URL validation
-- **Header Management**: Filters hop-by-hop headers, preserves auth/content headers  
+- **Header Management**: Filters hop-by-hop headers, preserves auth/content headers
 - **Error Passthrough**: HTTP errors (401, 429, 500) forwarded transparently
 - **Process Management**: Enhanced PID-based daemon control via `proxy.sh` with health checks
 - **Async Request Logging**: Branch-specific debugging logs in `/tmp/codex_plus/`
+- **Hook Execution**: Settings-driven hooks with JSON stdin/stdout protocol and timeout controls
+- **FastAPI Lifespan**: Session start/end hook integration with application lifecycle
 
 ## Development Milestones
 
@@ -166,15 +175,24 @@ curl -X POST http://localhost:10000/v1/chat/completions \
 - ✅ Maintain non-slash input passthrough behavior
 - ✅ Security validation and SSRF protection
 
-### 🚧 M3: Enhanced Features (In Progress)
+### ✅ M3: Enhanced Features (Complete)
 - ✅ Async request logging for debugging
 - ✅ Branch-specific log organization
 - ✅ Enhanced security validation (header sanitization, upstream URL validation)
 - ✅ Comprehensive test coverage expansion
-- 🚧 Hook system integration
-- 📋 Advanced command templating
+- ✅ Hook system integration (UserPromptSubmit, PreToolUse, PostToolUse, Stop, SessionStart/End)
+- ✅ Status line middleware with git status injection
+- ✅ Settings-based hooks with JSON stdin/stdout protocol
 
-### 📋 M4: MCP Integration (Planned)
+### 🚧 M4: Advanced Hook Features (In Progress)
+- ✅ Complete hook lifecycle event support
+- ✅ Settings-driven hook execution with timeouts
+- ✅ Pre/post-input hooks with YAML frontmatter and Python classes
+- ✅ Hook middleware integration with FastAPI lifespan
+- 📋 Advanced command templating and composition
+- 📋 Hook debugging and development tools
+
+### 📋 M5: MCP Integration (Planned)
 - Remote MCP tool discovery and invocation
 - Tool result integration into conversation context
 - MCP protocol compatibility with Claude Code CLI conventions
@@ -187,35 +205,52 @@ codex_plus/
 │   ├── main.py                  # Thin re-export wrapper
 │   ├── main_sync_cffi.py        # Core FastAPI proxy with middleware
 │   ├── llm_execution_middleware.py  # LLM execution middleware
-│   └── request_logger.py        # Async request logging
+│   ├── request_logger.py        # Async request logging
+│   ├── hooks.py                 # Hook system implementation
+│   └── status_line_middleware.py # Git status line injection
 ├── tests/                       # Comprehensive test suite
-│   ├── conftest.py
+│   ├── conftest.py              # Pytest configuration
 │   ├── test_proxy.py            # Core proxy tests
-│   ├── test_enhanced_slash_middleware.py
-│   ├── test_llm_execution.py
-│   ├── test_request_logger.py
-│   └── ...
-├── .codexplus/                  # Primary slash commands
-│   ├── commands/
+│   ├── test_enhanced_slash_middleware.py # Slash command tests
+│   ├── test_llm_execution.py    # LLM execution tests
+│   ├── test_request_logger.py   # Request logging tests
+│   ├── test_hooks.py            # Hook system tests
+│   ├── test_hooks_integration.py # Hook integration tests
+│   ├── test_copilot_command.py  # Copilot command tests
+│   └── claude/hooks/            # Hook-specific tests
+├── .codexplus/                  # Primary configuration
+│   ├── commands/                # Slash command definitions
 │   │   ├── copilot.md           # Autonomous PR processing
-│   │   ├── echo.md
-│   │   ├── hello.md
-│   │   └── test-args.md
-│   └── hooks/
-│       └── inject_marker.py    # Hook examples
+│   │   ├── echo.md              # Echo test command
+│   │   ├── hello.md             # Hello world command
+│   │   └── test-args.md         # Argument testing
+│   ├── hooks/                   # Hook implementations
+│   │   ├── add_context.py       # UserPromptSubmit hook example
+│   │   ├── post_add_header.py   # Post-output hook example
+│   │   └── shared_utils.py      # Hook utilities
+│   └── settings.json            # Project-level hook configuration
 ├── .github/workflows/           # CI/CD
-│   └── tests.yml
-├── docs/                        # Documentation
-│   ├── codex_request_structure.json
-│   ├── CODEX_ANALYSIS_REPORT.md
-│   └── testing/
+│   └── tests.yml                # GitHub Actions test workflow
+├── scripts/                     # Development and deployment scripts
+│   ├── claude_mcp.sh
+│   ├── claude_start.sh
+│   ├── coverage.sh
+│   ├── run_tests_with_coverage.sh
+│   └── ...
+├── testing_llm/                 # LLM testing documentation
+│   ├── 01_basic_proxy_test.md
+│   ├── 02_hook_integration.md
+│   └── ...
 ├── infrastructure-scripts/      # Deployment helpers
+├── roadmap/                     # Development roadmap
 ├── proxy.sh                     # Enhanced process control script
 ├── run_tests.sh                 # Local CI simulation
+├── pytest.ini                  # Pytest configuration
 ├── requirements.txt             # Python dependencies
 ├── README.md                    # Project documentation
 ├── product_spec.md             # User stories and acceptance criteria
 ├── design.md                   # Architecture design
+├── AGENTS.md                    # Repository guidelines
 └── CLAUDE.md                   # This file - AI assistant guidance
 ```
 
@@ -226,12 +261,15 @@ codex_plus/
 ### Test Categories
 - **Core Request Interception**: Verify forwarding behavior for different endpoints
 - **LLM Execution Middleware**: Test slash command detection and instruction injection
+- **Hook System**: Test pre/post-input hooks, lifecycle events, settings-based hooks
 - **Security Validation**: SSRF protection, header sanitization, upstream URL validation
 - **Streaming Response Types**: Test JSON, SSE, binary streaming preservation
-- **Error Conditions**: Ensure 401, 404, 429, 500 errors pass through correctly  
+- **Error Conditions**: Ensure 401, 404, 429, 500 errors pass through correctly
 - **Special Cases**: Local `/health` endpoint handling
 - **Async Request Logging**: Branch-specific logging functionality
-- **Integration Tests**: End-to-end testing with real commands
+- **Integration Tests**: End-to-end testing with real commands and hooks
+- **Command Processing**: Test slash command expansion, argument substitution
+- **Status Line Middleware**: Test git status injection and formatting
 
 ### Test Execution
 ```bash
@@ -240,13 +278,18 @@ codex_plus/
 pytest -v                         # All tests
 pytest tests/test_proxy.py -v     # Core proxy tests
 pytest tests/test_enhanced_slash_middleware.py -v  # Middleware tests
+pytest tests/test_hooks.py -v     # Hook system tests
+pytest tests/test_llm_execution.py -v  # LLM execution tests
 
 # Run with coverage
 pytest --cov=src/codex_plus --cov-report=html -v
+scripts/run_tests_with_coverage.sh # Coverage with HTML report
 
 # Run specific test patterns
 pytest -k "test_slash_command" -v
 pytest -k "test_security" -v
+pytest -k "test_hooks" -v
+pytest -m "not slow" -v          # Skip slow network tests
 ```
 
 ## Implementation Guidelines
