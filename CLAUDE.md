@@ -34,6 +34,37 @@ The proxy forwards all requests with authentication headers intact to the ChatGP
 
 **CRITICAL**: A working proxy should return 200 for authenticated Codex CLI requests. Getting 401 constantly means authentication forwarding is broken.
 
+## 🚨🚨🚨 CODEBASE PROTECTION RULES 🚨🚨🚨
+
+**🔒 PROTECTED FILES - MODIFICATIONS FORBIDDEN:**
+- `src/codex_plus/main_sync_cffi.py` - Core proxy with curl_cffi forwarding
+- `src/codex_plus/llm_execution_middleware.py` - Contains curl_cffi session logic
+- `proxy.sh` - Critical startup command and port configuration
+- `src/codex_plus/main.py` - Protected import wrapper
+
+**❌ ABSOLUTELY FORBIDDEN CHANGES:**
+- Replacing curl_cffi with any other HTTP client (requests, httpx, aiohttp)
+- Modifying upstream URL from `https://chatgpt.com/backend-api/codex`
+- Changing port from 10000 (Codex CLI expects this port)
+- Removing Chrome impersonation from curl_cffi sessions
+- Altering authentication header forwarding logic
+- Breaking streaming response handling
+
+**✅ SAFE MODIFICATION ZONES:**
+- Hook system files in `.codexplus/hooks/` and `.claude/hooks/`
+- Hook processing logic in `hooks.py` module
+- Status line middleware functionality
+- Request/response logging and debugging
+- Command file reading and slash command processing
+- Security validation functions (as long as they don't break forwarding)
+
+**🛡️ PROTECTION ENFORCEMENT:**
+All critical files contain extensive warning comments marking protected vs safe-to-modify sections.
+Follow these comments religiously - they mark the exact boundaries of what can be safely changed.
+
+**💀 CONSEQUENCE OF VIOLATIONS:**
+Breaking these rules will immediately break ALL Codex functionality, blocking requests and preventing communication with ChatGPT backend. The proxy will stop working entirely.
+
 ## Project Overview
 
 **Codex-Plus** is an HTTP proxy that intercepts Codex CLI requests to add power-user features (slash commands, hooks, MCP tools, persistent sessions) while maintaining identical UI/UX to Codex CLI.
@@ -261,6 +292,26 @@ echo '{"input": [{"type": "message", "content": [{"type": "input_text", "text": 
 - Command definitions stored in `.codexplus/commands/` and `.claude/commands/`
 - Advanced commands like `/copilot` for autonomous PR processing
 - Maintains identical UI/UX to Codex CLI while adding power-user features
+
+### Hooks Lifecycle (Anthropic-Aligned)
+- Events supported: UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop, PreCompact, SessionStart, SessionEnd
+- Sources: `.codexplus/settings.json` (project first), `.claude/settings.json` (fallback)
+- Format (per Anthropic docs):
+  {
+    "hooks": {
+      "EventName": [
+        { "matcher": "ToolPattern", "hooks": [ { "type": "command", "command": "...", "timeout": 5 } ] }
+      ]
+    }
+  }
+- Execution: commands receive JSON on stdin; exit 2 blocks; stdout JSON may include additionalContext or feedback
+- Python .py hooks with YAML frontmatter still work for `pre-input`/`post-output` using `Hook` subclasses
+
+### Implementation Details
+- No external scripts in the request path; a lightweight middleware prints git status line
+- Settings-driven hooks are executed around `/responses` and detected slash commands
+- Session start/end hooks are fired via FastAPI lifespan handlers
+- Import safety: we do not mutate `sys.path` when loading hooks; .py hooks import `codex_plus.hooks` directly
 
 ### Environment Variables
 ```bash

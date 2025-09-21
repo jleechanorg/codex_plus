@@ -3,86 +3,145 @@
 Test script for LLM execution middleware
 Tests whether instructing the LLM to execute commands works better than expanding them
 """
+import pytest
 import json
+import copy
 from codex_plus.llm_execution_middleware import LLMExecutionMiddleware
 
-def test_execution_instruction():
-    """Test that we generate proper execution instructions"""
-    
-    middleware = LLMExecutionMiddleware("https://api.openai.com")
-    
-    # Test detecting slash commands
-    test_cases = [
-        ("/test auth.py", [("test", "auth.py")]),
-        ("/search TODO", [("search", "TODO")]),
-        ("/git status", [("git", "status")]),
-        ("/explain /refactor code", [("explain", "/refactor code")]),
-        ("Run /test and then /lint", [("test", "and then"), ("lint", "")]),
-    ]
-    
-    print("🧪 Testing slash command detection:")
-    for text, expected in test_cases:
-        detected = middleware.detect_slash_commands(text)
-        status = "✅" if detected == expected else "❌"
-        print(f"  {status} '{text}' -> {detected}")
-    
-    print("\n📝 Testing execution instruction generation:")
-    
-    # Test with a simple command
-    commands = [("test", "auth.py")]
-    instruction = middleware.create_execution_instruction(commands)
-    print(f"\nFor command: /test auth.py")
-    print("Generated instruction:")
-    print("-" * 40)
-    print(instruction[:500] + "..." if len(instruction) > 500 else instruction)
-    print("-" * 40)
-    
-    print("\n🔧 Testing request modification:")
-    
-    # Test with Codex format
-    codex_request = {
-        "input": [{
-            "type": "message",
-            "role": "user",
-            "content": [{
-                "type": "input_text",
-                "text": "/test auth.py"
-            }]
-        }]
-    }
-    
-    modified = middleware.inject_execution_behavior(codex_request.copy())
-    
-    print("\nOriginal request:")
-    print(json.dumps(codex_request, indent=2)[:200] + "...")
-    
-    print("\nModified request:")
-    print(json.dumps(modified, indent=2)[:500] + "...")
-    
-    # Test with standard format
-    standard_request = {
-        "messages": [
-            {"role": "user", "content": "/search TODO in the codebase"}
+
+class TestLLMExecutionMiddleware:
+    """Test suite for LLM execution middleware with proper assertions"""
+
+    @pytest.fixture
+    def middleware(self):
+        """Create middleware instance for testing"""
+        return LLMExecutionMiddleware("https://api.openai.com")
+
+    def test_slash_command_detection(self, middleware):
+        """Test that slash commands are properly detected and parsed"""
+        test_cases = [
+            ("/test auth.py", [("test", "auth.py")]),
+            ("/search TODO", [("search", "TODO")]),
+            ("/git status", [("git", "status")]),
+            ("/explain /refactor code", [("explain", ""), ("refactor", "code")]),
+            ("Run /test and then /lint", [("test", "and then"), ("lint", "")]),
         ]
-    }
-    
-    modified_standard = middleware.inject_execution_behavior(standard_request.copy())
-    
-    print("\n\nStandard format test:")
-    print("Original:", json.dumps(standard_request, indent=2))
-    print("\nModified (with system instruction):")
-    print(json.dumps(modified_standard, indent=2)[:500] + "...")
-    
-    print("\n✅ Test complete!")
-    
-    # Show what the LLM would receive
-    print("\n🤖 What the LLM sees:")
-    print("=" * 50)
-    if "messages" in modified_standard:
-        for msg in modified_standard["messages"]:
-            print(f"\n[{msg['role'].upper()}]:")
-            print(msg['content'][:300] + "..." if len(msg['content']) > 300 else msg['content'])
-    print("=" * 50)
+
+        for text, expected in test_cases:
+            detected = middleware.detect_slash_commands(text)
+            assert detected == expected, f"Failed to detect commands in '{text}'. Expected {expected}, got {detected}"
+
+    def test_execution_instruction_generation(self, middleware):
+        """Test that execution instructions are generated correctly"""
+        commands = [("test", "auth.py")]
+        instruction = middleware.create_execution_instruction(commands)
+
+        # Verify instruction contains key elements
+        assert "slash command interpreter" in instruction.lower()
+        assert "execution rules" in instruction.lower()
+        assert "/test:" in instruction
+        assert "auth.py" in instruction
+        assert len(instruction) > 100, "Instruction should be substantial"
+
+    def test_codex_format_request_modification(self, middleware):
+        """Test request modification for Codex format"""
+        codex_request = {
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": "/test auth.py"
+                }]
+            }]
+        }
+
+        original = copy.deepcopy(codex_request)
+        modified = middleware.inject_execution_behavior(codex_request)
+
+        # Verify original request structure is preserved
+        assert "input" in modified
+        assert len(modified["input"]) == len(original["input"])
+
+        # Verify modification occurred (content should be different)
+        original_text = original["input"][0]["content"][0]["text"]
+        modified_text = modified["input"][0]["content"][0]["text"]
+        assert modified_text != original_text
+        assert "[SYSTEM:" in modified_text
+
+    def test_standard_format_request_modification(self, middleware):
+        """Test request modification for standard messages format"""
+        standard_request = {
+            "messages": [
+                {"role": "user", "content": "/search TODO in the codebase"}
+            ]
+        }
+
+        original_count = len(standard_request["messages"])
+        modified = middleware.inject_execution_behavior(copy.deepcopy(standard_request))
+
+        # Verify system message was injected
+        assert "messages" in modified
+        assert len(modified["messages"]) == original_count + 1
+
+        # Verify system message is first
+        system_msg = modified["messages"][0]
+        assert system_msg["role"] == "system"
+        assert "slash command interpreter" in system_msg["content"].lower()
+
+        # Verify original user message is preserved
+        user_msg = modified["messages"][1]
+        assert user_msg["role"] == "user"
+        assert user_msg["content"] == "/search TODO in the codebase"
+
+    def test_no_slash_commands_no_modification(self, middleware):
+        """Test that requests without slash commands are not modified"""
+        regular_request = {
+            "messages": [
+                {"role": "user", "content": "Hello, how are you?"}
+            ]
+        }
+
+        original = copy.deepcopy(regular_request)
+        modified = middleware.inject_execution_behavior(copy.deepcopy(regular_request))
+
+        # Should be identical
+        assert modified == original
+
+    def test_empty_request_handling(self, middleware):
+        """Test handling of empty or malformed requests"""
+        empty_requests = [
+            {},
+            {"messages": []},
+            {"input": []},
+        ]
+
+        for request in empty_requests:
+            try:
+                result = middleware.inject_execution_behavior(copy.deepcopy(request) if request else {})
+                # Should not crash and should return the original request
+                assert result == (request or {})
+            except Exception as e:
+                pytest.fail(f"Should handle empty request gracefully, got: {e}")
+
+    def test_instruction_contains_execution_context(self, middleware):
+        """Test that generated instructions contain proper execution context"""
+        commands = [("help", ""), ("status", "project")]
+        instruction = middleware.create_execution_instruction(commands)
+
+        # Check for execution-specific keywords
+        required_phrases = [
+            "execution rules",
+            "run step-by-step",
+            "show actual output",
+            "begin execution now"
+        ]
+
+        instruction_lower = instruction.lower()
+        for phrase in required_phrases:
+            assert phrase in instruction_lower, f"Instruction missing required phrase: '{phrase}'"
+
 
 if __name__ == "__main__":
-    test_execution_instruction()
+    # Allow direct execution for debugging
+    pytest.main([__file__, "-v"])

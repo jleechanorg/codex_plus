@@ -3,26 +3,76 @@
 Codex Plus Proxy using curl_cffi synchronous client for better SSE handling
 Now with integrated slash command middleware for .claude/ infrastructure
 
-🚨 CRITICAL: This proxy REQUIRES curl_cffi to bypass Cloudflare 🚨
-DO NOT replace with httpx, requests, or any other HTTP client
-Codex uses ChatGPT backend with session auth, NOT OpenAI API keys
+🚨🚨🚨 CRITICAL WARNING - DO NOT MODIFY PROXY FORWARDING LOGIC 🚨🚨🚨
+
+⚠️  PROXY FORWARDING CORE IS OFF-LIMITS - MODIFICATIONS FORBIDDEN ⚠️
+- This proxy REQUIRES curl_cffi to bypass Cloudflare - DO NOT CHANGE
+- DO NOT replace with httpx, requests, or any other HTTP client
+- DO NOT modify upstream URL forwarding to ChatGPT backend
+- DO NOT change authentication header handling
+- DO NOT alter streaming response logic
+- Codex uses ChatGPT backend with session auth, NOT OpenAI API keys
+
+✅ SAFE TO MODIFY: Only the hooks module and hook-related functionality
+- Modify files in .codexplus/hooks/ and .claude/hooks/
+- Edit hook processing logic in hooks.py module
+- Add new hook types or middleware integrations
+- Extend status line middleware functionality
+
+🔒 PROTECTED COMPONENTS (DO NOT TOUCH):
+- curl_cffi session configuration and requests
+- Upstream URL and forwarding logic
+- Authentication header preservation
+- Streaming response handling
+- Security validation functions
+- Core proxy request/response cycle
+
+Breaking these rules WILL break the proxy and block all Codex requests.
 """
 from fastapi import FastAPI, Request, HTTPException
+from contextlib import asynccontextmanager
 from fastapi.responses import StreamingResponse, JSONResponse
 from curl_cffi import requests
 import logging
+import json as _json
+import json
+import sys
+import os
+import time
 import re
 from urllib.parse import urlparse
+from .status_line_middleware import HookMiddleware
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        # Session start hooks
+        try:
+            from .hooks import settings_session_start
+            await settings_session_start(None, source="startup")
+        except Exception as e:
+            logger.error(f"Failed to execute session start hooks: {e}")
+        yield
+    finally:
+        # Session end hooks
+        try:
+            from .hooks import settings_session_end
+            await settings_session_end(None, reason="exit")
+        except Exception as e:
+            logger.error(f"Failed to execute session end hooks: {e}")
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Logger setup (must be defined before first use)
 logger = logging.getLogger("codex_plus_proxy")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
 
-# Configuration
+# 🔒 PROTECTED CONFIGURATION - DO NOT MODIFY 🔒
+# CRITICAL: This URL MUST remain exactly as specified for Codex to work
 UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Codex
+# ⚠️ Changing this URL will break all Codex functionality ⚠️
 
 # Security validation
 def _validate_proxy_request(path: str, headers: dict) -> None:
@@ -69,10 +119,26 @@ def _validate_upstream_url(url: str) -> bool:
     except Exception:
         return False
 
+# 🔒 PROTECTED MIDDLEWARE INITIALIZATION - MODIFY ONLY HOOK COMPONENTS 🔒
+# ✅ SAFE: Hook-related imports and hook_middleware modifications
+# ❌ FORBIDDEN: slash_middleware initialization or create_llm_execution_middleware calls
+
 # Initialize slash command middleware
 logger.info("Initializing LLM execution middleware (instruction mode)")
 from .llm_execution_middleware import create_llm_execution_middleware
+# ⚠️ DO NOT MODIFY: This creates the core proxy forwarding with curl_cffi
 slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
+
+# ✅ SAFE TO MODIFY: Hook system imports and processing
+from .hooks import (
+    process_pre_input_hooks,
+    process_post_output_hooks,
+    settings_stop,
+    hook_system,
+)
+
+# ✅ SAFE TO MODIFY: Hook middleware configuration and extensions
+hook_middleware = HookMiddleware(hook_manager=hook_system)
 
 @app.get("/health")
 async def health():
@@ -82,7 +148,19 @@ async def health():
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(request: Request, path: str):
-    """Proxy with integrated slash command middleware support"""
+    """
+    🚨🚨🚨 CRITICAL PROXY FUNCTION - EXTREMELY DANGEROUS TO MODIFY 🚨🚨🚨
+
+    ⚠️  CORE PROXY FORWARDING LOGIC - DO NOT TOUCH UNLESS ABSOLUTELY NECESSARY ⚠️
+
+    This function handles the core Codex proxy forwarding to ChatGPT backend.
+    Modifications to this function can break ALL Codex functionality.
+
+    ✅ SAFE TO MODIFY: Hook processing sections (clearly marked)
+    ❌ FORBIDDEN: Request forwarding, middleware calls, response handling
+
+    Proxy with integrated slash command middleware support
+    """
     # Log incoming request
     logger.info(f"Processing {request.method} /{path}")
 
@@ -96,12 +174,72 @@ async def proxy(request: Request, path: str):
 
     # Read body for debug logging (preserve original behavior)
     body = await request.body()
+    # Apply pre-input hooks for JSON bodies on /responses
+    if body and path == "responses":
+        try:
+            body_dict = _json.loads(body)
+            modified = await process_pre_input_hooks(request, body_dict)
+            if modified != body_dict:
+                # stash modified body for downstream middleware
+                try:
+                    request.state.modified_body = _json.dumps(modified).encode('utf-8')
+                    logger.info("Pre-input hooks applied: request body modified")
+                except Exception as e:
+                    logger.debug(f"Unable to set modified_body on request.state: {e}")
+            # If any settings hooks blocked the prompt, short-circuit
+            if getattr(request.state, 'user_prompt_block', None):
+                reason = request.state.user_prompt_block.get('reason', 'Blocked by hook')
+                return JSONResponse({"error": reason}, status_code=400)
+        except _json.JSONDecodeError:
+            logger.debug("Request body not JSON; skipping pre-input hooks")
+
+    # Debug: Log request body to see system prompts
     logger.debug(f"Path: {path}, Body length: {len(body) if body else 0}")
 
     # Debug: Log request payload for debugging (async, non-blocking)
     from .request_logger import RequestLogger
     RequestLogger.log_request_payload(body, path)
 
+    # ✅ SAFE TO MODIFY: Hook processing and status line handling
+    # Get status line and store it in request context for middleware to use
+    try:
+        status_line = await hook_middleware.get_status_line()
+        if status_line:
+            logger.info(f"📍 Storing status line for injection: {status_line}")
+            # Store status line in request state for middleware to access
+            if hasattr(request, 'state'):
+                request.state.status_line = status_line
+            logger.info("✅ Status line stored for middleware injection")
+    except Exception as e:
+        logger.error(f"Status line storage failed: {e}")
+
+    # 🔒 PROTECTED: Core middleware call - DO NOT MODIFY 🔒
+    # ❌ CRITICAL: This handles curl_cffi forwarding to ChatGPT backend
     # Process request through slash command middleware
     # This will either handle slash commands or proxy normally
-    return await slash_middleware.process_request(request, path)
+    try:
+        logger.info(f"🎯 Calling middleware for {path}")
+        response = await slash_middleware.process_request(request, path)
+        logger.info(f"✅ Middleware completed for {path}")
+    except Exception as e:
+        logger.error(f"❌ Middleware failed for {path}: {e}")
+        # Fallback to basic proxy behavior
+        return JSONResponse({"error": f"Middleware error: {str(e)}"}, status_code=500)
+
+    # ✅ SAFE TO MODIFY: Post-output hook processing
+    # Apply post-output hooks only for non-streaming responses to avoid consuming streams
+    try:
+        if not isinstance(response, StreamingResponse):
+            response = await process_post_output_hooks(response)
+    except Exception as e:
+        logger.debug(f"post-output hooks failed: {e}")
+
+    # Run hook middleware side-effects (non-blocking)
+    import asyncio
+    # Also trigger Stop settings hooks (best-effort)
+    try:
+        asyncio.create_task(settings_stop(request, {"transcript_path": ""}))
+    except Exception:
+        pass
+
+    return response
