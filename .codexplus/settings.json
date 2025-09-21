@@ -1,8 +1,8 @@
 {
   "statusLine": {
     "type": "command",
-    "command": "echo '[Dir: codex_plus | Local: docs/comprehensive-update (synced) | Remote: origin/docs/comprehensive-update | PR: none]'",
-    "timeout": 2
+    "command": "bash -c 'PR=$(gh pr view --json number -q .number 2>/dev/null || echo \"none\"); if [ \"$PR\" != \"none\" ]; then PR=\"#$PR\"; fi; echo \"[Dir: codex_plus | Local: docs/comprehensive-update (synced) | Remote: origin/docs/comprehensive-update | PR: $PR]\"'",
+    "timeout": 3
   },
   "hooks": {
     "PostToolUse": [

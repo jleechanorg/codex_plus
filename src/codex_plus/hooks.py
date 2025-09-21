@@ -317,7 +317,23 @@ class HookSystem:
             else:
                 status = f" (diverged +{ahead} -{behind})"
 
-            return f"[Dir: {repo} | Local: {br}{status} | Remote: {up} | PR: none]"
+            # Check for PR information
+            pr_info = "none"
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "gh", "pr", "view", "--json", "number", "-q", ".number",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+                if stdout:
+                    pr_num = stdout.decode().strip()
+                    if pr_num and pr_num.isdigit():
+                        pr_info = f"#{pr_num}"
+            except Exception:
+                pass
+
+            return f"[Dir: {repo} | Local: {br}{status} | Remote: {up} | PR: {pr_info}]"
         except Exception:
             return None
     
