@@ -200,7 +200,7 @@ class HookSystem:
         """Run statusLine command from settings and return a short line for SSE."""
         cfg = self.status_line_cfg
         if not cfg:
-            return None
+            return await self._git_status_line_fallback()
         payload = {
             "session_id": self.session_id,
             "hook_event_name": "StatusLine",
@@ -209,75 +209,7 @@ class HookSystem:
         code, out, err, _ = await self._run_command_hook(cfg["command"], payload, cfg.get("timeout", 2))
         text = (out or err or "").strip()
         if not text or text.lower().startswith('hook timed out'):
-            # Fallback: compute a minimal header via git (async)
-            try:
-                # Use async subprocess for git commands
-                proc = await asyncio.create_subprocess_exec(
-                    "git", "rev-parse", "--show-toplevel",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL
-                )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
-                root = stdout.decode().strip() if stdout else ""
-                repo = root.rsplit("/", 1)[-1] if root else "repo"
-
-                proc = await asyncio.create_subprocess_exec(
-                    "git", "branch", "--show-current",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL
-                )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
-                br = stdout.decode().strip() if stdout else "main"
-
-                # Get upstream info
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.DEVNULL
-                    )
-                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
-                    up = stdout.decode().strip() if stdout else "no upstream"
-                except Exception:
-                    up = "no upstream"
-
-                a = b = 0
-                if up != "no upstream":
-                    try:
-                        proc = await asyncio.create_subprocess_exec(
-                            "git", "rev-list", "--count", f"{up}..HEAD",
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.DEVNULL
-                        )
-                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
-                        a = int(stdout.decode().strip()) if stdout else 0
-                    except Exception:
-                        a = 0
-                    try:
-                        proc = await asyncio.create_subprocess_exec(
-                            "git", "rev-list", "--count", f"HEAD..{up}",
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.DEVNULL
-                        )
-                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
-                        b = int(stdout.decode().strip()) if stdout else 0
-                    except Exception:
-                        b = 0
-
-                status = ""
-                if up == "no upstream":
-                    status = " (no remote)"
-                elif a == 0 and b == 0:
-                    status = " (synced)"
-                elif a > 0 and b == 0:
-                    status = f" (ahead {a})"
-                elif a == 0 and b > 0:
-                    status = f" (behind {b})"
-                else:
-                    status = f" (diverged +{a} -{b})"
-                return f"[Dir: {repo} | Local: {br}{status} | Remote: {up} | PR: none]"
-            except Exception:
-                return None
+            return await self._git_status_line_fallback()
         lines = [ln for ln in text.splitlines() if ln.strip()]
         # Prefer a bracketed header with Dir/Local/Remote if present
         preferred = None
@@ -301,6 +233,75 @@ class HookSystem:
         if isinstance(mode, str):
             return mode.lower()
         return None
+
+    async def _git_status_line_fallback(self) -> Optional[str]:
+        """Compute a best-effort git status line when no hook output is available."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "rev-parse", "--show-toplevel",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+            root = stdout.decode().strip() if stdout else ""
+            repo = root.rsplit("/", 1)[-1] if root else "repo"
+
+            proc = await asyncio.create_subprocess_exec(
+                "git", "branch", "--show-current",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+            br = stdout.decode().strip() if stdout else "main"
+
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+                up = stdout.decode().strip() if stdout else "no upstream"
+            except Exception:
+                up = "no upstream"
+
+            ahead = behind = 0
+            if up != "no upstream":
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "git", "rev-list", "--count", f"{up}..HEAD",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL
+                    )
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+                    ahead = int(stdout.decode().strip()) if stdout else 0
+                except Exception:
+                    ahead = 0
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "git", "rev-list", "--count", f"HEAD..{up}",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL
+                    )
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+                    behind = int(stdout.decode().strip()) if stdout else 0
+                except Exception:
+                    behind = 0
+
+            if up == "no upstream":
+                status = " (no remote)"
+            elif ahead == 0 and behind == 0:
+                status = " (synced)"
+            elif ahead > 0 and behind == 0:
+                status = f" (ahead {ahead})"
+            elif ahead == 0 and behind > 0:
+                status = f" (behind {behind})"
+            else:
+                status = f" (diverged +{ahead} -{behind})"
+
+            return f"[Dir: {repo} | Local: {br}{status} | Remote: {up} | PR: none]"
+        except Exception:
+            return None
     
     def _load_hook_from_file(self, file_path: Path) -> Optional[Hook]:
         """Load a single hook from a Python file"""
