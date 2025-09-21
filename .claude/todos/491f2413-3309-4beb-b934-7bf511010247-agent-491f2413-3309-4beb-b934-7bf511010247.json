@@ -1,0 +1,7 @@
+[
+  {
+    "content": "Fix bad request error - inject into user message not system",
+    "status": "in_progress",
+    "activeForm": "Fixing injection to use user message"
+  }
+]

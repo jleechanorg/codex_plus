@@ -1,0 +1,32 @@
+[
+  {
+    "content": "Execute /guidelines for centralized mistake prevention consultation",
+    "status": "completed",
+    "activeForm": "Executing /guidelines for mistake prevention consultation"
+  },
+  {
+    "content": "Execute parallel Technical Track A with /cerebras comprehensive analysis",
+    "status": "completed",
+    "activeForm": "Executing parallel Technical Track A with /cerebras analysis"
+  },
+  {
+    "content": "Execute parallel Technical Track B with /arch and subagent deployment",
+    "status": "in_progress",
+    "activeForm": "Executing parallel Technical Track B with /arch and subagents"
+  },
+  {
+    "content": "Execute AI Research Track with Perplexity MCP and security research",
+    "status": "pending",
+    "activeForm": "Executing AI Research Track with Perplexity MCP"
+  },
+  {
+    "content": "Execute /reviewe for enhanced code review with GitHub PR comments",
+    "status": "pending",
+    "activeForm": "Executing /reviewe for enhanced code review"
+  },
+  {
+    "content": "Synthesize findings and generate comprehensive documentation",
+    "status": "pending",
+    "activeForm": "Synthesizing findings and generating documentation"
+  }
+]

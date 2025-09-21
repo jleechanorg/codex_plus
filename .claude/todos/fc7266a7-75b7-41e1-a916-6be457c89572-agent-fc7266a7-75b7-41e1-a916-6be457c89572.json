@@ -1,0 +1,17 @@
+[
+  {
+    "content": "Run local tests to verify import validation changes",
+    "status": "completed",
+    "activeForm": "Running local tests to verify import validation changes"
+  },
+  {
+    "content": "Test the helper function with different scenarios",
+    "status": "completed",
+    "activeForm": "Testing the helper function with different scenarios"
+  },
+  {
+    "content": "Verify CI compatibility fix works",
+    "status": "in_progress",
+    "activeForm": "Verifying CI compatibility fix works"
+  }
+]

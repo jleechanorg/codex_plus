@@ -1,0 +1,27 @@
+[
+  {
+    "content": "Push current changes to create PR",
+    "status": "completed",
+    "activeForm": "Pushing current changes to create PR"
+  },
+  {
+    "content": "Run copilot analysis on the created PR",
+    "status": "completed",
+    "activeForm": "Running copilot analysis on the created PR"
+  },
+  {
+    "content": "Generate missing responses for 6 unresponded comments (orchestrator responsibility)",
+    "status": "in_progress",
+    "activeForm": "Generating missing responses for 6 unresponded comments (orchestrator responsibility)"
+  },
+  {
+    "content": "Re-run commentreply to post missing responses",
+    "status": "pending",
+    "activeForm": "Re-running commentreply to post missing responses"
+  },
+  {
+    "content": "Verify 100% comment coverage with commentcheck",
+    "status": "pending",
+    "activeForm": "Verifying 100% comment coverage with commentcheck"
+  }
+]

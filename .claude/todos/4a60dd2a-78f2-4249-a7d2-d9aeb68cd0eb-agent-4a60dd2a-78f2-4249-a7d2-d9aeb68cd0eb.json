@@ -1,0 +1,27 @@
+[
+  {
+    "content": "Create condensed copilot.md (50% reduction)",
+    "status": "pending",
+    "activeForm": "Creating condensed copilot.md (50% reduction)"
+  },
+  {
+    "content": "Focus on executable steps only",
+    "status": "pending",
+    "activeForm": "Focusing on executable steps only"
+  },
+  {
+    "content": "Add minimal verification checkpoints",
+    "status": "pending",
+    "activeForm": "Adding minimal verification checkpoints"
+  },
+  {
+    "content": "Test condensed version readability",
+    "status": "pending",
+    "activeForm": "Testing condensed version readability"
+  },
+  {
+    "content": "Create PR with the changes",
+    "status": "pending",
+    "activeForm": "Creating PR with the changes"
+  }
+]

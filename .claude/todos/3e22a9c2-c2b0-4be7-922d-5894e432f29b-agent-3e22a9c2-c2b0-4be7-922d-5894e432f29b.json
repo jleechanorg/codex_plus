@@ -1,0 +1,22 @@
+[
+  {
+    "content": "Search for slash command parsing/processing code",
+    "status": "completed",
+    "activeForm": "Searching for slash command parsing/processing code"
+  },
+  {
+    "content": "Find custom command loading mechanism",
+    "status": "completed",
+    "activeForm": "Finding custom command loading mechanism"
+  },
+  {
+    "content": "Analyze command execution flow",
+    "status": "completed",
+    "activeForm": "Analyzing command execution flow"
+  },
+  {
+    "content": "Document implementation details",
+    "status": "in_progress",
+    "activeForm": "Documenting implementation details"
+  }
+]

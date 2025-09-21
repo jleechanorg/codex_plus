@@ -1,0 +1,27 @@
+[
+  {
+    "content": "Set up environment configuration for testing",
+    "status": "completed",
+    "activeForm": "Setting up environment configuration for testing"
+  },
+  {
+    "content": "Start LiteLLM proxy server",
+    "status": "pending",
+    "activeForm": "Starting LiteLLM proxy server"
+  },
+  {
+    "content": "Start Node.js middleware server",
+    "status": "completed",
+    "activeForm": "Starting Node.js middleware server"
+  },
+  {
+    "content": "Test slash commands functionality",
+    "status": "completed",
+    "activeForm": "Testing slash commands functionality"
+  },
+  {
+    "content": "Test request forwarding to LiteLLM",
+    "status": "pending",
+    "activeForm": "Testing request forwarding to LiteLLM"
+  }
+]

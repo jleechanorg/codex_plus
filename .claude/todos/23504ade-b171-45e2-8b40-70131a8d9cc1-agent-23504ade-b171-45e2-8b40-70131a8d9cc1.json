@@ -1,0 +1,17 @@
+[
+  {
+    "content": "Fix API proxy missing path rewriting in proxy-server.cjs",
+    "status": "completed",
+    "activeForm": "Fixing API proxy missing path rewriting in proxy-server.cjs"
+  },
+  {
+    "content": "Replace hardcoded baseURL in playwright.config.ts with environment variable",
+    "status": "pending",
+    "activeForm": "Replacing hardcoded baseURL in playwright.config.ts with environment variable"
+  },
+  {
+    "content": "Remove commented webServer configuration in playwright.config.ts",
+    "status": "pending",
+    "activeForm": "Removing commented webServer configuration in playwright.config.ts"
+  }
+]

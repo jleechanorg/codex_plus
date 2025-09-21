@@ -1,0 +1,32 @@
+[
+  {
+    "content": "Phase 0: Evidence Gathering - Reproduce exact user problem",
+    "status": "in_progress",
+    "activeForm": "Phase 0: Evidence Gathering - Reproducing exact user problem"
+  },
+  {
+    "content": "Phase 0.5: Context-Aware Code Walkthrough",
+    "status": "pending",
+    "activeForm": "Phase 0.5: Context-Aware Code Walkthrough"
+  },
+  {
+    "content": "Phase 1: Hypothesis Formation",
+    "status": "pending",
+    "activeForm": "Phase 1: Hypothesis Formation"
+  },
+  {
+    "content": "Phase 2: Systematic Testing & Validation",
+    "status": "pending",
+    "activeForm": "Phase 2: Systematic Testing & Validation"
+  },
+  {
+    "content": "Phase 3: Root Cause Analysis",
+    "status": "pending",
+    "activeForm": "Phase 3: Root Cause Analysis"
+  },
+  {
+    "content": "Phase 4: Solution Implementation",
+    "status": "pending",
+    "activeForm": "Phase 4: Solution Implementation"
+  }
+]

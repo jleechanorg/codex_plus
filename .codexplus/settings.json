@@ -1,4 +1,9 @@
 {
+  "statusLine": {
+    "type": "command",
+    "command": "echo '[Dir: codex_plus | Local: docs/comprehensive-update (synced) | Remote: origin/docs/comprehensive-update | PR: none]'",
+    "timeout": 2
+  },
   "hooks": {
     "PostToolUse": [
       {

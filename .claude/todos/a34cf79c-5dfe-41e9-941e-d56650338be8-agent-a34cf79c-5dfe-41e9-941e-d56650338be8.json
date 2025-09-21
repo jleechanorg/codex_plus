@@ -1,0 +1,22 @@
+[
+  {
+    "content": "Update design_v2.md with enhanced features and feedback",
+    "status": "in_progress",
+    "activeForm": "Updating design_v2.md with enhanced features and feedback"
+  },
+  {
+    "content": "Add table of contents and executive summary",
+    "status": "pending",
+    "activeForm": "Adding table of contents and executive summary"
+  },
+  {
+    "content": "Include slash commands, hooks, and remote MCP sections",
+    "status": "pending",
+    "activeForm": "Including slash commands, hooks, and remote MCP sections"
+  },
+  {
+    "content": "Push updated design to PR",
+    "status": "pending",
+    "activeForm": "Pushing updated design to PR"
+  }
+]

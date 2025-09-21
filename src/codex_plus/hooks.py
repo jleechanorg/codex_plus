@@ -125,11 +125,15 @@ class HookSystem:
                 logger.error(f"Failed reading settings from {p}: {e}")
             return {}
 
-        # Locate settings files
+        # Locate settings files with proper precedence order
+        # 1. .codexplus/settings.json (highest priority)
+        # 2. .claude/settings.json (project)
+        # 3. ~/.claude/settings.json (user home, lowest priority)
         codex_settings = Path(".codexplus/settings.json")
         claude_settings = Path(".claude/settings.json")
+        home_claude_settings = Path.home() / ".claude" / "settings.json"
         cfgs = []
-        for p in [codex_settings, claude_settings]:
+        for p in [codex_settings, claude_settings, home_claude_settings]:
             cfg = read_settings(p)
             if cfg:
                 cfgs.append(cfg)
@@ -166,13 +170,16 @@ class HookSystem:
         if self.settings_hooks:
             logger.info(f"Loaded settings hooks for events: {sorted(self.settings_hooks.keys())}")
 
-        # Determine statusLine with explicit precedence: .codexplus overrides .claude
+        # Determine statusLine with explicit precedence: .codexplus > .claude > ~/.claude
         try:
             import json as _json
             codex_p = Path('.codexplus/settings.json')
             claude_p = Path('.claude/settings.json')
+            home_claude_p = Path.home() / '.claude' / 'settings.json'
             sl_codex = None
             sl_claude = None
+            sl_home = None
+            
             if codex_p.exists():
                 cfgc = _json.loads(codex_p.read_text(encoding='utf-8'))
                 sl = cfgc.get('statusLine')
@@ -191,7 +198,18 @@ class HookSystem:
                         'timeout': sl.get('timeout', 2),
                         'mode': sl.get('mode') or sl.get('appendMode'),
                     }
-            self.status_line_cfg = sl_codex or sl_claude
+            if home_claude_p.exists():
+                cfgc = _json.loads(home_claude_p.read_text(encoding='utf-8'))
+                sl = cfgc.get('statusLine')
+                if isinstance(sl, dict) and sl.get('type') == 'command' and sl.get('command'):
+                    sl_home = {
+                        'command': sl.get('command'),
+                        'timeout': sl.get('timeout', 2),
+                        'mode': sl.get('mode') or sl.get('appendMode'),
+                    }
+            
+            # Apply precedence: .codexplus > .claude > ~/.claude
+            self.status_line_cfg = sl_codex or sl_claude or sl_home
         except Exception as e:
             logger.debug(f"Failed to load status line configuration: {e}")
             self.status_line_cfg = None

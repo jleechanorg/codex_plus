@@ -1,0 +1,17 @@
+[
+  {
+    "content": "Use debugp to inspect how status line should work",
+    "status": "completed",
+    "activeForm": "Using debugp to inspect how status line should work"
+  },
+  {
+    "content": "Analyze past working implementation",
+    "status": "completed",
+    "activeForm": "Analyzing past working implementation"
+  },
+  {
+    "content": "Fix the status line display issue",
+    "status": "in_progress",
+    "activeForm": "Fixing the status line display issue"
+  }
+]

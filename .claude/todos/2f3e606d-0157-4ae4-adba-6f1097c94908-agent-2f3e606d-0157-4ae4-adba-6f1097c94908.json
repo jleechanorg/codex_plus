@@ -1,0 +1,37 @@
+[
+  {
+    "content": "Read and analyze the codex/implement-multi-model-opinion-synthesis test specification",
+    "status": "completed",
+    "activeForm": "Reading test specification"
+  },
+  {
+    "content": "Extract all requirements into systematic TodoWrite checklist",
+    "status": "completed",
+    "activeForm": "Extracting requirements"
+  },
+  {
+    "content": "Test 1: Backend API Response Structure - Verify synthesis field presence",
+    "status": "pending",
+    "activeForm": "Testing synthesis field presence"
+  },
+  {
+    "content": "Test 2: Response Structure Validation - Check all required fields",
+    "status": "pending",
+    "activeForm": "Validating response structure"
+  },
+  {
+    "content": "Test 3: Secondary Opinions Working - Baseline functionality check",
+    "status": "pending",
+    "activeForm": "Testing secondary opinions"
+  },
+  {
+    "content": "Execute synthesis-test.js with real environment",
+    "status": "pending",
+    "activeForm": "Running actual test script"
+  },
+  {
+    "content": "Collect evidence and validate results against specification",
+    "status": "pending",
+    "activeForm": "Validating test results"
+  }
+]
