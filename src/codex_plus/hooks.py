@@ -214,20 +214,20 @@ class HookSystem:
             logger.debug(f"Failed to load status line configuration: {e}")
             self.status_line_cfg = None
 
-    async def run_status_line(self) -> Optional[str]:
+    async def run_status_line(self, working_directory: Optional[str] = None) -> Optional[str]:
         """Run statusLine command from settings and return a short line for SSE."""
         cfg = self.status_line_cfg
         if not cfg:
-            return await self._git_status_line_fallback()
+            return await self._git_status_line_fallback(working_directory)
         payload = {
             "session_id": self.session_id,
             "hook_event_name": "StatusLine",
-            "cwd": self._cached_cwd,
+            "cwd": working_directory or self._cached_cwd,
         }
         code, out, err, _ = await self._run_command_hook(cfg["command"], payload, cfg.get("timeout", 2))
         text = (out or err or "").strip()
         if not text or text.lower().startswith('hook timed out'):
-            return await self._git_status_line_fallback()
+            return await self._git_status_line_fallback(working_directory)
         lines = [ln for ln in text.splitlines() if ln.strip()]
         # Prefer a bracketed header with Dir/Local/Remote if present
         preferred = None
@@ -252,11 +252,11 @@ class HookSystem:
             return mode.lower()
         return None
 
-    async def _git_status_line_fallback(self) -> Optional[str]:
+    async def _git_status_line_fallback(self, working_directory: Optional[str] = None) -> Optional[str]:
         """Compute a best-effort git status line when no hook output is available."""
         try:
             # Add overall timeout for entire operation
-            return await asyncio.wait_for(self._git_status_line_fallback_impl(), timeout=2.0)
+            return await asyncio.wait_for(self._git_status_line_fallback_impl(working_directory), timeout=2.0)
         except Exception:
             # Return simple fallback if anything fails
             # Add light blue coloring even to fallback
@@ -264,8 +264,11 @@ class HookSystem:
             reset = "\033[0m"        # Reset color
             return f"{light_blue}[Dir: codex_plus | Local: current-branch | Remote: origin/branch | PR: unknown]{reset}"
 
-    async def _git_status_line_fallback_impl(self) -> Optional[str]:
+    async def _git_status_line_fallback_impl(self, working_directory: Optional[str] = None) -> Optional[str]:
         """Implementation of git status line fallback with faster timeouts"""
+        # Use provided working directory or fall back to current directory
+        cwd = working_directory or self._cached_cwd
+
         # Get basic git info with very short timeouts
         repo = "repo"
         br = "main"
@@ -275,7 +278,8 @@ class HookSystem:
             proc = await asyncio.create_subprocess_exec(
                 "git", "rev-parse", "--show-toplevel",
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL
+                stderr=asyncio.subprocess.DEVNULL,
+                cwd=cwd
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=0.3)
             if stdout:
@@ -289,7 +293,8 @@ class HookSystem:
             proc = await asyncio.create_subprocess_exec(
                 "git", "branch", "--show-current",
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL
+                stderr=asyncio.subprocess.DEVNULL,
+                cwd=cwd
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=0.3)
             if stdout:
@@ -306,7 +311,8 @@ class HookSystem:
             proc = await asyncio.create_subprocess_exec(
                 "gh", "pr", "view", "--json", "number,url", "-q", '"\(.number),\(.url)"',
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL
+                stderr=asyncio.subprocess.DEVNULL,
+                cwd=cwd
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=0.3)
             if stdout:
@@ -560,7 +566,8 @@ class HookSystem:
         import asyncio, json, shlex, os as _os
         try:
             # Best-effort project dir discovery for CLAUDE_PROJECT_DIR
-            project_dir = self._cached_cwd
+            # Use working directory from payload if available (for CLI requests)
+            project_dir = payload.get("cwd", self._cached_cwd)
             try:
                 # Use async subprocess for git command too
                 proc = await asyncio.create_subprocess_exec(

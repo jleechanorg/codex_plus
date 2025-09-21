@@ -209,11 +209,19 @@ async def proxy(request: Request, path: str):
     RequestLogger.log_request_payload(body, path)
 
     # ✅ SAFE TO MODIFY: Hook processing and status line handling
-    # Get cached status line (non-blocking) - background task updates this
+    # Extract working directory from headers if available
+    working_directory = headers.get('x-working-directory')
+
+    # Get status line based on working directory (if provided) or cached status line
     try:
-        status_line = hook_middleware.get_cached_status_line()
+        if working_directory:
+            logger.info(f"📂 Using working directory from headers: {working_directory}")
+            status_line = await hook_middleware.get_status_line(working_directory)
+        else:
+            status_line = hook_middleware.get_cached_status_line()
+
         if status_line:
-            logger.info(f"📍 Storing cached status line for injection: {status_line}")
+            logger.info(f"📍 Storing status line for injection: {status_line}")
             # Store status line in request state for middleware to access
             if hasattr(request, 'state'):
                 request.state.status_line = status_line
