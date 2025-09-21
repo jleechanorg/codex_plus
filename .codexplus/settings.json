@@ -1,12 +1,12 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "PostToolUse": [
       {
         "matcher": "SlashCommand/.*",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $CLAUDE_PROJECT_DIR/.codexplus/hooks/pretool_block.py",
+            "command": "echo '{\"event\": \"PostToolUse\", \"tool\": \"TOOL_NAME\", \"status\": \"completed\"}'",
             "timeout": 2
           }
         ]
