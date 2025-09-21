@@ -397,19 +397,17 @@ BEGIN EXECUTION NOW:
             )
 
             # Schedule cleanup of response reference when streaming completes
-            def cleanup_response():
+            async def cleanup_response():
                 try:
-                    if response in self._active_responses:
+                    if hasattr(self, '_active_responses') and response in self._active_responses:
                         self._active_responses.remove(response)
                 except:
                     pass
 
             # Add cleanup callback (if supported by FastAPI StreamingResponse)
             if hasattr(streaming_response, 'background'):
-                import asyncio
-                def background_cleanup():
-                    cleanup_response()
-                streaming_response.background = background_cleanup
+                from starlette.background import BackgroundTask
+                streaming_response.background = BackgroundTask(cleanup_response)
 
             return streaming_response
             

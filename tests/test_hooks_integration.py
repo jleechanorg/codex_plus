@@ -1,4 +1,5 @@
 import json
+import asyncio
 from pathlib import Path
 from unittest.mock import patch, Mock
 
@@ -37,7 +38,15 @@ hook = InjectMarker('inject-marker', {'type':'pre-input','priority':10,'enabled'
 
     try:
         # Reload hooks so the new file is discovered
-        hooks_mod.hook_system._load_hooks()
+        # Handle async event loop issue by catching RuntimeError
+        try:
+            hooks_mod.hook_system._load_hooks()
+        except RuntimeError as e:
+            if "Event loop is closed" in str(e):
+                # Event loop issue during test - try again with clean environment
+                hooks_mod.hook_system = hooks_mod.HookSystem()
+            else:
+                raise
 
         client = TestClient(app)
 

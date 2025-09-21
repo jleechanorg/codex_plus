@@ -1,12 +1,24 @@
 #!/bin/bash
-# Local test runner that simulates GitHub CI environment
-# Based on .github/workflows/tests.yml
+# Centralized test runner for both local development and CI
+# Supports: ./run_tests.sh (local) and ./run_tests.sh --ci (GitHub Actions)
 
 set -e  # Exit on any error
 
-echo "🧪 Codex Plus Local Test Runner"
-echo "================================"
-echo "Simulating GitHub CI environment locally..."
+# Parse command line arguments
+CI_MODE=false
+if [[ "$1" == "--ci" ]]; then
+    CI_MODE=true
+fi
+
+if [ "$CI_MODE" = true ]; then
+    echo "🤖 Codex Plus CI Test Runner"
+    echo "============================"
+    echo "Running in GitHub Actions CI mode..."
+else
+    echo "🧪 Codex Plus Local Test Runner"
+    echo "================================"
+    echo "Simulating GitHub CI environment locally..."
+fi
 echo
 
 # Check if we're in the right directory
@@ -52,21 +64,25 @@ fi
 
 echo
 
-# Install dependencies
-echo "📦 Installing/upgrading Python dependencies..."
-python -m pip install --upgrade pip
+# Install dependencies (only in local mode, CI already installs them)
+if [ "$CI_MODE" = false ]; then
+    echo "📦 Installing/upgrading Python dependencies..."
+    python -m pip install --upgrade pip
 
-if [ -f requirements.txt ]; then
-    echo "Installing requirements.txt..."
-    pip install -r requirements.txt
+    if [ -f requirements.txt ]; then
+        echo "Installing requirements.txt..."
+        pip install -r requirements.txt
+    else
+        echo "❌ Error: requirements.txt not found"
+        exit 1
+    fi
+
+    # Install pytest (like CI)
+    echo "Installing pytest..."
+    pip install pytest pytest-xdist pytest-timeout
 else
-    echo "❌ Error: requirements.txt not found"
-    exit 1
+    echo "📦 Using CI-installed dependencies..."
 fi
-
-# Install pytest (like CI)
-echo "Installing pytest..."
-pip install pytest
 
 echo
 
@@ -77,29 +93,41 @@ echo "✅ NO_NETWORK=1 (simulating CI network restrictions)"
 
 echo
 
-# Run tests with timeout (like CI)
+# Run tests
 echo "🧪 Running tests..."
-echo "Command: pytest -q --tb=short"
-echo "Timeout: 10 minutes (practical timeout)"
-echo
 
-# Run with practical timeout and better output
-echo "Running fast tests first..."
-pytest tests/claude/hooks/ -q --tb=short
-
-echo
-echo "Running main test suite..."
-# Use timeout if available (Linux/macOS)
-if command -v timeout >/dev/null 2>&1; then
-    # Linux timeout - 10 minutes instead of 15
-    timeout 600 pytest -q --tb=short --maxfail=3
-elif command -v gtimeout >/dev/null 2>&1; then
-    # macOS timeout (if coreutils installed)
-    gtimeout 600 pytest -q --tb=short --maxfail=3
+if [ "$CI_MODE" = true ]; then
+    # CI mode: Use exact same command as GitHub Actions
+    echo "Command: pytest -q --tb=short --timeout=60 -m \"not slow and not integration\" -n auto --dist=worksteal --ignore=tests/claude/commands/test_orchestrate_integration.py --maxfail=5"
+    echo
+    pytest -q --tb=short --timeout=60 -m "not slow and not integration" \
+           -n auto --dist=worksteal \
+           --ignore=tests/claude/commands/test_orchestrate_integration.py \
+           --maxfail=5
 else
-    # No timeout available, run normally with fail-fast
-    echo "(No timeout command available, running with fail-fast)"
-    pytest -q --tb=short --maxfail=3
+    # Local mode: More conservative approach
+    echo "Command: pytest -q --tb=short --maxfail=3"
+    echo "Timeout: 10 minutes (practical timeout)"
+    echo
+
+    # Run with practical timeout and better output
+    echo "Running fast tests first..."
+    pytest tests/claude/hooks/ -q --tb=short
+
+    echo
+    echo "Running main test suite..."
+    # Use timeout if available (Linux/macOS)
+    if command -v timeout >/dev/null 2>&1; then
+        # Linux timeout - 10 minutes instead of 15
+        timeout 600 pytest -q --tb=short --maxfail=3
+    elif command -v gtimeout >/dev/null 2>&1; then
+        # macOS timeout (if coreutils installed)
+        gtimeout 600 pytest -q --tb=short --maxfail=3
+    else
+        # No timeout available, run normally with fail-fast
+        echo "(No timeout command available, running with fail-fast)"
+        pytest -q --tb=short --maxfail=3
+    fi
 fi
 
 test_exit_code=$?
