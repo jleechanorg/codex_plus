@@ -1,8 +1,8 @@
 {
   "statusLine": {
     "type": "command",
-    "command": "bash -c 'PR=$(gh pr view --json number -q .number 2>/dev/null || echo \"none\"); if [ \"$PR\" != \"none\" ]; then PR=\"#$PR\"; fi; echo \"[Dir: codex_plus | Local: docs/comprehensive-update (synced) | Remote: origin/docs/comprehensive-update | PR: $PR]\"'",
-    "timeout": 3
+    "command": "bash -c 'PR_JSON=$(gh pr view --json number,url 2>/dev/null); if [ $? -eq 0 ]; then PR_NUM=$(echo \"$PR_JSON\" | jq -r \".number\"); PR_URL=$(echo \"$PR_JSON\" | jq -r \".url\"); PR=\"#$PR_NUM $PR_URL\"; else PR=\"none\"; fi; BRANCH=$(git branch --show-current); REMOTE=\"origin/$BRANCH\"; STATUS=$(git status --porcelain -b | head -1 | grep -o \"ahead [0-9]*\" || echo \"synced\"); echo \"[Dir: codex_plus | Local: $BRANCH ($STATUS) | Remote: $REMOTE | PR: $PR]\"'",
+    "timeout": 1
   },
   "hooks": {
     "PostToolUse": [

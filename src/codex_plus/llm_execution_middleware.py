@@ -222,7 +222,7 @@ BEGIN EXECUTION NOW:
 
         # Add status line if available
         if status_line:
-            injection_parts.append(f"IMPORTANT: Always start your response with this status line exactly as shown: {status_line}")
+            injection_parts.append(f"IMPORTANT: Always start your response with exactly this format:\n\n{status_line}\n\nThen continue with your normal response. The status line MUST be separated by blank lines above and below.")
             logger.info(f"📌 Will inject status line: {status_line}")
 
         # Add execution instructions if needed
