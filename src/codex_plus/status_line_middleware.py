@@ -84,10 +84,7 @@ class HookMiddleware:
         if not self.hook_manager:
             async with self._cache_lock:
                 if self._cached_status_line is None:
-                    # Add light blue coloring like Claude Code CLI
-                    light_blue = "\033[94m"  # Light blue ANSI color
-                    reset = "\033[0m"        # Reset color
-                    self._cached_status_line = f"{light_blue}[Dir: codex_plus | Local: current-branch | Remote: origin/branch | PR: unknown]{reset}"
+                    self._cached_status_line = "[Dir: codex_plus | Local: current-branch | Remote: origin/branch | PR: unknown]"
             return
 
         async with self._cache_lock:
@@ -105,18 +102,12 @@ class HookMiddleware:
                     clean_result = re.sub(r'\x1b\[[0-9;]*m', '', result)
                     self._cached_status_line = clean_result
                 else:
-                    # Add light blue coloring like Claude Code CLI
-                    light_blue = "\033[94m"  # Light blue ANSI color
-                    reset = "\033[0m"        # Reset color
-                    self._cached_status_line = f"{light_blue}[Dir: codex_plus | Local: current-branch | Remote: origin/branch | PR: unknown]{reset}"
+                    self._cached_status_line = "[Dir: codex_plus | Local: current-branch | Remote: origin/branch | PR: unknown]"
             except Exception as e:
                 logger.debug(f"Status line update failed: {e}")
                 # Keep existing cache or set fallback
                 if self._cached_status_line is None:
-                    # Add light blue coloring like Claude Code CLI
-                    light_blue = "\033[94m"  # Light blue ANSI color
-                    reset = "\033[0m"        # Reset color
-                    self._cached_status_line = f"{light_blue}[Dir: codex_plus | Local: current-branch | Remote: origin/branch | PR: unknown]{reset}"
+                    self._cached_status_line = "[Dir: codex_plus | Local: current-branch | Remote: origin/branch | PR: unknown]"
 
     async def emit_status_line(self) -> None:
         """Legacy method - kept for compatibility"""
