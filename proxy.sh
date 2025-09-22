@@ -35,6 +35,7 @@ PROXY_MODULE="main_sync_cffi"
 RUNTIME_DIR="/tmp/codex_plus"
 PID_FILE="$RUNTIME_DIR/proxy.pid"
 LOG_FILE="$RUNTIME_DIR/proxy.log"
+LOCK_FILE="$RUNTIME_DIR/proxy.lock"
 # Autostart configuration
 AUTOSTART_LABEL="com.codex.plus.proxy"
 LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
@@ -104,7 +105,7 @@ print_status() {
         fi
     else
         # Only clean up if no PID file exists
-        cleanup_stale_resources  
+        cleanup_stale_resources
         echo -e "  ${RED}❌ Not running${NC}"
         return 1
     fi
@@ -118,22 +119,21 @@ start_proxy() {
     chmod 755 "$RUNTIME_DIR"
 
     # Create a lock file to prevent concurrent starts
-    local lock_file="$RUNTIME_DIR/proxy.lock"
     local lock_timeout=10
 
     # Clean up stale lock files first
-    if [ -f "$lock_file" ]; then
-        local lock_pid=$(cat "$lock_file" 2>/dev/null)
+    if [ -f "$LOCK_FILE" ]; then
+        local lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
         if [[ "$lock_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
             echo -e "${YELLOW}🧹 Removing stale lock file (PID $lock_pid no longer running)${NC}"
-            rm -f "$lock_file"
+            rm -f "$LOCK_FILE"
         fi
     fi
 
     # Try to acquire lock with timeout
     local lock_acquired=false
     for ((i=0; i<lock_timeout; i++)); do
-        if (set -C; echo $$ > "$lock_file") 2>/dev/null; then
+        if (set -C; echo $$ > "$LOCK_FILE") 2>/dev/null; then
             lock_acquired=true
             break
         fi
@@ -146,8 +146,8 @@ start_proxy() {
         return 1
     fi
 
-    # Ensure lock is released only if startup fails
-    trap 'if [ "$startup_success" != true ]; then rm -f "$lock_file"; fi' EXIT
+    startup_success=false
+    trap 'if [ "${startup_success:-false}" != true ]; then rm -f "$LOCK_FILE"; fi' EXIT
 
     # Check if already running (after acquiring lock)
     if print_status >/dev/null 2>&1; then
@@ -238,7 +238,6 @@ except Exception as e:
 
     # Enhanced startup verification with multiple checks
     local startup_timeout=10
-    local startup_success=false
 
     for ((i=0; i<startup_timeout; i++)); do
         sleep 1
@@ -258,6 +257,7 @@ except Exception as e:
     done
 
     if [ "$startup_success" = true ]; then
+        trap - EXIT
         echo -e "${GREEN}✅ Proxy started successfully and is responding${NC}"
         # Show status without cleanup to avoid killing the just-started process
         echo -e "${BLUE}🔍 M1 Proxy Status:${NC}"
@@ -278,6 +278,7 @@ except Exception as e:
             kill -KILL "$pid" 2>/dev/null
         fi
         rm -f "$PID_FILE"
+        rm -f "$LOCK_FILE"
         return 1
     fi
 }
