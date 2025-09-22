@@ -23,13 +23,13 @@ class HookMiddleware:
         self._cache_task = None
         self._cache_lock = asyncio.Lock()
 
-    async def get_status_line(self) -> Optional[str]:
+    async def get_status_line(self, working_directory: Optional[str] = None) -> Optional[str]:
         """Get status line content without printing it"""
         if not self.enable_git_status or not self.hook_manager:
             return None
         try:
             # Use the configurable hook system's run_status_line method
-            result = await self.hook_manager.run_status_line()
+            result = await self.hook_manager.run_status_line(working_directory)
 
             if result:
                 logger.info("🎯 Git Status Line:")

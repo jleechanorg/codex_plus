@@ -209,11 +209,31 @@ async def proxy(request: Request, path: str):
     RequestLogger.log_request_payload(body, path)
 
     # ✅ SAFE TO MODIFY: Hook processing and status line handling
-    # Get cached status line (non-blocking) - background task updates this
+    # Extract working directory from headers or request body
+    working_directory = headers.get('x-working-directory')
+
+    # Also check for working directory in request body (Codex CLI format)
+    if not working_directory and body:
+        try:
+            import re
+            # Look for <cwd>/path/to/directory</cwd> in the request body
+            cwd_match = re.search(r'<cwd>([^<]+)</cwd>', body.decode('utf-8', errors='ignore'))
+            if cwd_match:
+                working_directory = cwd_match.group(1)
+                logger.info(f"📂 Found working directory in request body: {working_directory}")
+        except Exception as e:
+            logger.debug(f"Failed to extract working directory from body: {e}")
+
+    # Get status line based on working directory (if provided) or cached status line
     try:
-        status_line = hook_middleware.get_cached_status_line()
+        if working_directory:
+            logger.info(f"📂 Using working directory: {working_directory}")
+            status_line = await hook_middleware.get_status_line(working_directory)
+        else:
+            status_line = hook_middleware.get_cached_status_line()
+
         if status_line:
-            logger.info(f"📍 Storing cached status line for injection: {status_line}")
+            logger.info(f"📍 Storing status line for injection: {status_line}")
             # Store status line in request state for middleware to access
             if hasattr(request, 'state'):
                 request.state.status_line = status_line
