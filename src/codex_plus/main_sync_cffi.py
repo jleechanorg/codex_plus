@@ -32,6 +32,8 @@ Breaking these rules WILL break the proxy and block all Codex requests.
 from fastapi import FastAPI, Request, HTTPException
 from contextlib import asynccontextmanager
 from fastapi.responses import StreamingResponse, JSONResponse
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
 from curl_cffi import requests
 import logging
 import json as _json
@@ -42,6 +44,90 @@ import time
 import re
 from urllib.parse import urlparse
 from .status_line_middleware import HookMiddleware
+
+# Pydantic models for API request/response validation
+class AgentConfigCreate(BaseModel):
+    """Model for creating new agent configurations."""
+    name: str = Field(..., description="Agent name")
+    description: str = Field(..., description="Agent description")
+    tools: List[str] = Field(default_factory=list, description="List of available tools")
+    model: str = Field(default="claude-3-5-sonnet-20241022", description="LLM model to use")
+    temperature: float = Field(default=0.7, ge=0, le=2, description="Model temperature")
+    max_tokens: int = Field(default=4096, gt=0, description="Maximum tokens")
+    system_prompt: Optional[str] = Field(None, description="Custom system prompt")
+    instructions: Optional[str] = Field(None, description="Agent instructions")
+    allowed_paths: List[str] = Field(default_factory=list, description="Allowed file paths")
+    forbidden_paths: List[str] = Field(default_factory=list, description="Forbidden file paths")
+    capabilities: List[str] = Field(default_factory=list, description="Agent capabilities")
+    version: str = Field(default="1.0.0", description="Configuration version")
+    author: Optional[str] = Field(None, description="Agent author")
+    tags: List[str] = Field(default_factory=list, description="Agent tags")
+
+class AgentConfigUpdate(BaseModel):
+    """Model for updating existing agent configurations."""
+    name: Optional[str] = Field(None, description="Agent name")
+    description: Optional[str] = Field(None, description="Agent description")
+    tools: Optional[List[str]] = Field(None, description="List of available tools")
+    model: Optional[str] = Field(None, description="LLM model to use")
+    temperature: Optional[float] = Field(None, ge=0, le=2, description="Model temperature")
+    max_tokens: Optional[int] = Field(None, gt=0, description="Maximum tokens")
+    system_prompt: Optional[str] = Field(None, description="Custom system prompt")
+    instructions: Optional[str] = Field(None, description="Agent instructions")
+    allowed_paths: Optional[List[str]] = Field(None, description="Allowed file paths")
+    forbidden_paths: Optional[List[str]] = Field(None, description="Forbidden file paths")
+    capabilities: Optional[List[str]] = Field(None, description="Agent capabilities")
+    version: Optional[str] = Field(None, description="Configuration version")
+    author: Optional[str] = Field(None, description="Agent author")
+    tags: Optional[List[str]] = Field(None, description="Agent tags")
+
+class AgentConfigResponse(BaseModel):
+    """Model for agent configuration responses."""
+    id: str = Field(..., description="Agent ID")
+    name: str = Field(..., description="Agent name")
+    description: str = Field(..., description="Agent description")
+    tools: List[str] = Field(..., description="List of available tools")
+    model: str = Field(..., description="LLM model to use")
+    temperature: float = Field(..., description="Model temperature")
+    max_tokens: int = Field(..., description="Maximum tokens")
+    system_prompt: Optional[str] = Field(None, description="Custom system prompt")
+    instructions: Optional[str] = Field(None, description="Agent instructions")
+    allowed_paths: List[str] = Field(..., description="Allowed file paths")
+    forbidden_paths: List[str] = Field(..., description="Forbidden file paths")
+    capabilities: List[str] = Field(..., description="Agent capabilities")
+    version: str = Field(..., description="Configuration version")
+    author: Optional[str] = Field(None, description="Agent author")
+    tags: List[str] = Field(..., description="Agent tags")
+
+class AgentInvokeRequest(BaseModel):
+    """Model for agent invocation requests."""
+    task: str = Field(..., description="Task description for the agent")
+    working_directory: Optional[str] = Field(None, description="Working directory for execution")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context data")
+
+class AgentInvokeResponse(BaseModel):
+    """Model for agent invocation responses."""
+    agent_id: str = Field(..., description="Agent ID")
+    task: str = Field(..., description="Task description")
+    success: bool = Field(..., description="Execution success status")
+    output: str = Field(..., description="Agent output")
+    error: Optional[str] = Field(None, description="Error message if failed")
+    duration: float = Field(..., description="Execution duration in seconds")
+    timestamp: float = Field(..., description="Execution timestamp")
+
+class MultiAgentInvokeRequest(BaseModel):
+    """Model for multiple agent invocation requests."""
+    agents: List[str] = Field(..., description="List of agent IDs to invoke")
+    task: str = Field(..., description="Task description for all agents")
+    working_directory: Optional[str] = Field(None, description="Working directory for execution")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context data")
+
+class MultiAgentInvokeResponse(BaseModel):
+    """Model for multiple agent invocation responses."""
+    results: List[AgentInvokeResponse] = Field(..., description="Individual agent results")
+    summary: str = Field(..., description="Summary of all agent executions")
+    total_duration: float = Field(..., description="Total execution duration")
+    successful_agents: int = Field(..., description="Number of successful agents")
+    total_agents: int = Field(..., description="Total number of agents")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -137,6 +223,12 @@ from .llm_execution_middleware import create_llm_execution_middleware
 # ⚠️ DO NOT MODIFY: This creates the core proxy forwarding with curl_cffi
 slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
 
+# Initialize agent orchestrator middleware
+logger.info("Initializing agent orchestrator middleware")
+from .agent_orchestrator_middleware import create_agent_orchestrator_middleware
+agent_middleware = create_agent_orchestrator_middleware(max_concurrent_agents=3, agent_timeout=30)
+logger.info(f"🤖 Agent orchestrator loaded: {len(agent_middleware.agents)} agents available")
+
 # ✅ SAFE TO MODIFY: Hook system imports and processing
 from .hooks import (
     process_pre_input_hooks,
@@ -154,6 +246,12 @@ async def health():
     logger.info("HEALTH OK")
     return JSONResponse({"status": "healthy"})
 
+@app.get("/agents/status")
+async def agents_status():
+    """Agent orchestrator status - not forwarded"""
+    logger.info("AGENT STATUS REQUEST")
+    return JSONResponse(agent_middleware.get_agent_status())
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(request: Request, path: str):
     """
@@ -169,6 +267,11 @@ async def proxy(request: Request, path: str):
 
     Proxy with integrated slash command middleware support
     """
+    # Skip forwarding for local endpoints
+    if path in ["health", "agents/status"]:
+        logger.warning(f"Path {path} should be handled by dedicated endpoint, not proxy")
+        return JSONResponse({"error": "Endpoint not found"}, status_code=404)
+
     # Log incoming request
     logger.info(f"Processing {request.method} /{path}")
 
@@ -240,6 +343,20 @@ async def proxy(request: Request, path: str):
             logger.info("✅ Status line stored for middleware injection")
     except Exception as e:
         logger.error(f"Status line storage failed: {e}")
+
+    # ✅ SAFE TO MODIFY: Agent orchestrator middleware processing
+    # Process agent invocation patterns (/agent, /agents run, /delegate)
+    try:
+        logger.info(f"🤖 Processing agent commands for {path}")
+        modified_request_data = await agent_middleware.process_request(request, path)
+        if modified_request_data:
+            # Agent commands were processed, update request body
+            modified_body = json.dumps(modified_request_data).encode('utf-8')
+            request.state.modified_body = modified_body
+            logger.info("🤖 Agent commands processed, request body modified")
+    except Exception as e:
+        logger.error(f"❌ Agent middleware failed for {path}: {e}")
+        # Continue processing - agent middleware failure shouldn't block the request
 
     # 🔒 PROTECTED: Core middleware call - DO NOT MODIFY 🔒
     # ❌ CRITICAL: This handles curl_cffi forwarding to ChatGPT backend
