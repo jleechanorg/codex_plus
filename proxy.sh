@@ -35,6 +35,7 @@ PROXY_MODULE="main_sync_cffi"
 RUNTIME_DIR="/tmp/codex_plus"
 PID_FILE="$RUNTIME_DIR/proxy.pid"
 LOG_FILE="$RUNTIME_DIR/proxy.log"
+LOCK_FILE="$RUNTIME_DIR/proxy.lock"
 # Autostart configuration
 AUTOSTART_LABEL="com.codex.plus.proxy"
 LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
@@ -87,9 +88,6 @@ cleanup_stale_resources() {
 print_status() {
     echo -e "${BLUE}🔍 M1 Proxy Status:${NC}"
 
-    # Clean up stale resources first
-    cleanup_stale_resources
-
     if [ -f "$PID_FILE" ]; then
         local pid=$(cat "$PID_FILE" 2>/dev/null)
         if validate_pid "$pid"; then
@@ -100,10 +98,14 @@ print_status() {
             echo -e "  ${GREEN}📊 Usage:${NC} OPENAI_BASE_URL=http://localhost:10000 codex"
             return 0
         else
+            # Only clean up stale resources if PID validation fails
+            cleanup_stale_resources
             echo -e "  ${RED}❌ Not running${NC} (cleaned up stale resources)"
             return 1
         fi
     else
+        # Only clean up if no PID file exists
+        cleanup_stale_resources
         echo -e "  ${RED}❌ Not running${NC}"
         return 1
     fi
@@ -112,14 +114,26 @@ print_status() {
 start_proxy() {
     echo -e "${BLUE}🚀 Starting M1 Simple Passthrough Proxy...${NC}"
 
+    # Ensure runtime directory exists first
+    mkdir -p "$RUNTIME_DIR"
+    chmod 755 "$RUNTIME_DIR"
+
     # Create a lock file to prevent concurrent starts
-    local lock_file="$RUNTIME_DIR/proxy.lock"
     local lock_timeout=10
+
+    # Clean up stale lock files first
+    if [ -f "$LOCK_FILE" ]; then
+        local lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
+        if [[ "$lock_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+            echo -e "${YELLOW}🧹 Removing stale lock file (PID $lock_pid no longer running)${NC}"
+            rm -f "$LOCK_FILE"
+        fi
+    fi
 
     # Try to acquire lock with timeout
     local lock_acquired=false
     for ((i=0; i<lock_timeout; i++)); do
-        if (set -C; echo $$ > "$lock_file") 2>/dev/null; then
+        if (set -C; echo $$ > "$LOCK_FILE") 2>/dev/null; then
             lock_acquired=true
             break
         fi
@@ -132,8 +146,8 @@ start_proxy() {
         return 1
     fi
 
-    # Ensure lock is released on exit
-    trap 'rm -f "$lock_file"' EXIT
+    startup_success=false
+    trap 'if [ "${startup_success:-false}" != true ]; then rm -f "$LOCK_FILE"; fi' EXIT
 
     # Check if already running (after acquiring lock)
     if print_status >/dev/null 2>&1; then
@@ -182,10 +196,6 @@ start_proxy() {
 
     echo -e "${GREEN}✅ Port 10000 is now available${NC}"
 
-    # Ensure runtime directory exists with proper permissions
-    mkdir -p "$RUNTIME_DIR"
-    chmod 755 "$RUNTIME_DIR"
-
     # Validate environment
     cd "$SCRIPT_DIR" || {
         echo -e "${RED}❌ Failed to change to script directory${NC}"
@@ -228,7 +238,6 @@ except Exception as e:
 
     # Enhanced startup verification with multiple checks
     local startup_timeout=10
-    local startup_success=false
 
     for ((i=0; i<startup_timeout; i++)); do
         sleep 1
@@ -248,8 +257,15 @@ except Exception as e:
     done
 
     if [ "$startup_success" = true ]; then
+        trap - EXIT
         echo -e "${GREEN}✅ Proxy started successfully and is responding${NC}"
-        print_status
+        # Show status without cleanup to avoid killing the just-started process
+        echo -e "${BLUE}🔍 M1 Proxy Status:${NC}"
+        echo -e "  ${GREEN}✅ Running${NC} (PID: $pid)"
+        echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
+        echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
+        echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
+        echo -e "  ${GREEN}📊 Usage:${NC} OPENAI_BASE_URL=http://localhost:10000 codex"
         return 0
     else
         echo -e "${RED}❌ Failed to start proxy or service is not responding${NC}"
@@ -262,6 +278,7 @@ except Exception as e:
             kill -KILL "$pid" 2>/dev/null
         fi
         rm -f "$PID_FILE"
+        rm -f "$LOCK_FILE"
         return 1
     fi
 }
