@@ -87,9 +87,6 @@ cleanup_stale_resources() {
 print_status() {
     echo -e "${BLUE}🔍 M1 Proxy Status:${NC}"
 
-    # Clean up stale resources first
-    cleanup_stale_resources
-
     if [ -f "$PID_FILE" ]; then
         local pid=$(cat "$PID_FILE" 2>/dev/null)
         if validate_pid "$pid"; then
@@ -100,10 +97,14 @@ print_status() {
             echo -e "  ${GREEN}📊 Usage:${NC} OPENAI_BASE_URL=http://localhost:10000 codex"
             return 0
         else
+            # Only clean up stale resources if PID validation fails
+            cleanup_stale_resources
             echo -e "  ${RED}❌ Not running${NC} (cleaned up stale resources)"
             return 1
         fi
     else
+        # Only clean up if no PID file exists
+        cleanup_stale_resources  
         echo -e "  ${RED}❌ Not running${NC}"
         return 1
     fi
@@ -111,6 +112,10 @@ print_status() {
 
 start_proxy() {
     echo -e "${BLUE}🚀 Starting M1 Simple Passthrough Proxy...${NC}"
+
+    # Ensure runtime directory exists first
+    mkdir -p "$RUNTIME_DIR"
+    chmod 755 "$RUNTIME_DIR"
 
     # Create a lock file to prevent concurrent starts
     local lock_file="$RUNTIME_DIR/proxy.lock"
@@ -132,8 +137,8 @@ start_proxy() {
         return 1
     fi
 
-    # Ensure lock is released on exit
-    trap 'rm -f "$lock_file"' EXIT
+    # Ensure lock is released only if startup fails
+    trap 'if [ "$startup_success" != true ]; then rm -f "$lock_file"; fi' EXIT
 
     # Check if already running (after acquiring lock)
     if print_status >/dev/null 2>&1; then
@@ -181,10 +186,6 @@ start_proxy() {
     fi
 
     echo -e "${GREEN}✅ Port 10000 is now available${NC}"
-
-    # Ensure runtime directory exists with proper permissions
-    mkdir -p "$RUNTIME_DIR"
-    chmod 755 "$RUNTIME_DIR"
 
     # Validate environment
     cd "$SCRIPT_DIR" || {
@@ -249,7 +250,13 @@ except Exception as e:
 
     if [ "$startup_success" = true ]; then
         echo -e "${GREEN}✅ Proxy started successfully and is responding${NC}"
-        print_status
+        # Show status without cleanup to avoid killing the just-started process
+        echo -e "${BLUE}🔍 M1 Proxy Status:${NC}"
+        echo -e "  ${GREEN}✅ Running${NC} (PID: $pid)"
+        echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
+        echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
+        echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
+        echo -e "  ${GREEN}📊 Usage:${NC} OPENAI_BASE_URL=http://localhost:10000 codex"
         return 0
     else
         echo -e "${RED}❌ Failed to start proxy or service is not responding${NC}"

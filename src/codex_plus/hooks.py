@@ -301,7 +301,7 @@ class HookSystem:
         pr_info = "none"
         try:
             proc = await asyncio.create_subprocess_exec(
-                "gh", "pr", "view", "--json", "number,url", "-q", '"\(.number),\(.url)"',
+                "gh", "pr", "view", "--json", "number,url", "-q", r'"\(.number),\(.url)"',
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL
             )
