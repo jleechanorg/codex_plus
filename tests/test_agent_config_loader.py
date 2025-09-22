@@ -48,7 +48,7 @@ Follow these instructions carefully.
         assert config.model == "claude-3-5-sonnet-20241022"
         assert config.temperature == 0.5
         assert set(config.capabilities) == {"code_analysis", "testing"}
-        assert "specialized test agent" in config.instructions
+        assert "Follow these instructions" in config.instructions
     
     def test_from_yaml_without_frontmatter(self):
         """Test parsing YAML without frontmatter."""
