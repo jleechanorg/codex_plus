@@ -121,6 +121,15 @@ start_proxy() {
     local lock_file="$RUNTIME_DIR/proxy.lock"
     local lock_timeout=10
 
+    # Clean up stale lock files first
+    if [ -f "$lock_file" ]; then
+        local lock_pid=$(cat "$lock_file" 2>/dev/null)
+        if [[ "$lock_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+            echo -e "${YELLOW}🧹 Removing stale lock file (PID $lock_pid no longer running)${NC}"
+            rm -f "$lock_file"
+        fi
+    fi
+
     # Try to acquire lock with timeout
     local lock_acquired=false
     for ((i=0; i<lock_timeout; i++)); do
