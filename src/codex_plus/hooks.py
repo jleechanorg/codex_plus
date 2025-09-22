@@ -173,8 +173,11 @@ class HookSystem:
         # Determine statusLine with explicit precedence: .codexplus > .claude > ~/.claude
         try:
             import json as _json
-            codex_p = Path('.codexplus/settings.json')
-            claude_p = Path('.claude/settings.json')
+            import os
+            # Use current working directory to resolve relative paths correctly
+            cwd = Path(os.getcwd())
+            codex_p = cwd / '.codexplus' / 'settings.json'
+            claude_p = cwd / '.claude' / 'settings.json'
             home_claude_p = Path.home() / '.claude' / 'settings.json'
             sl_codex = None
             sl_claude = None
@@ -306,7 +309,7 @@ class HookSystem:
         pr_info = "none"
         try:
             proc = await asyncio.create_subprocess_exec(
-                "gh", "pr", "view", "--json", "number,url", "-q", '"\(.number),\(.url)"',
+                "gh", "pr", "view", "--json", "number,url", "-q", r'"\(.number),\(.url)"',
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
                 cwd=cwd
