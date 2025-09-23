@@ -30,6 +30,7 @@ from urllib.parse import parse_qs, urlparse
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from .subagents import AgentCapability, AgentContext, AgentStatus, SubAgent
 from .subagents.config_loader import AgentConfiguration, AgentConfigurationLoader
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,7 @@ class AgentOrchestrationMiddleware:
         self.max_concurrent_agents = max_concurrent_agents
         self.agent_timeout = agent_timeout
         self.active_executions: Dict[str, asyncio.Task] = {}
+        self._subagent_cache: Dict[str, Dict[str, Any]] = {}
 
         # Load agent configurations
         self._load_agents()
@@ -124,9 +126,58 @@ class AgentOrchestrationMiddleware:
                 self.config_loader.create_default_agents()
                 self.agents = self.config_loader.load_all()
 
+            # Synchronize runtime subagent cache with latest configurations
+            self._build_subagent_cache()
+
         except Exception as e:
             logger.error(f"Failed to load agent configurations: {e}")
             self.agents = {}
+            self._subagent_cache = {}
+
+    def _build_subagent_cache(self) -> None:
+        """Create runtime subagent blueprints for loaded configurations."""
+        cache: Dict[str, Dict[str, Any]] = {}
+
+        for agent_id, config in self.agents.items():
+            try:
+                cache[agent_id] = self._create_subagent_blueprint(agent_id, config)
+            except Exception as exc:
+                logger.error(
+                    "Failed to build subagent '%s': %s",
+                    agent_id,
+                    exc,
+                )
+
+        self._subagent_cache = cache
+
+    def _create_subagent_blueprint(self, agent_id: str, config: AgentConfiguration) -> Dict[str, Any]:
+        """Create a blueprint dict used to instantiate SubAgents on demand."""
+
+        capability_set: Set[AgentCapability] = set()
+        for raw_capability in config.capabilities:
+            enum_key = raw_capability.replace("-", "_").upper()
+            try:
+                capability_set.add(AgentCapability[enum_key])
+            except KeyError:
+                logger.debug(
+                    "Ignoring unknown agent capability '%s' for agent '%s'",
+                    raw_capability,
+                    agent_id,
+                )
+
+        return {
+            "agent_id": agent_id,
+            "name": config.name,
+            "description": config.description,
+            "capabilities": capability_set,
+            "config": {
+                "tools": config.tools,
+                "model": config.model,
+                "temperature": config.temperature,
+                "max_tokens": config.max_tokens,
+                "tags": config.tags,
+            },
+        }
 
     def detect_agent_invocation(self, request_body: Dict) -> Optional[Dict[str, Any]]:
         """Detect agent invocation patterns in request body.
@@ -308,7 +359,7 @@ class AgentOrchestrationMiddleware:
             # Execute agent with timeout
             try:
                 result = await asyncio.wait_for(
-                    self._execute_agent_request(agent_payload, config),
+                    self._execute_agent_request(agent_id, agent_payload, config, context),
                     timeout=self.agent_timeout
                 )
 
@@ -383,61 +434,83 @@ class AgentOrchestrationMiddleware:
 
         return payload
 
-    async def _execute_agent_request(self, payload: Dict, config: AgentConfiguration) -> str:
-        """Execute the agent request and return response.
+    async def _execute_agent_request(
+        self,
+        agent_id: str,
+        payload: Dict[str, Any],
+        config: AgentConfiguration,
+        context: AgentExecutionContext,
+    ) -> str:
+        """Execute the agent request and return response."""
 
-        This method integrates with Claude Code's Task tool to execute agents.
-        It constructs a Task invocation that will be processed by the downstream
-        slash command middleware.
-        """
+        task_content = payload["messages"][-1]["content"]
+
+        blueprint = self._subagent_cache.get(agent_id)
+        if not blueprint:
+            blueprint = self._create_subagent_blueprint(agent_id, config)
+            self._subagent_cache[agent_id] = blueprint
+
+        subagent = SubAgent(
+            agent_id=blueprint["agent_id"],
+            name=blueprint["name"],
+            description=blueprint["description"],
+            capabilities=set(blueprint["capabilities"]),
+            config=blueprint["config"],
+        )
+
+        agent_context = AgentContext(
+            parent_context=dict(context.shared_state),
+            allowed_paths=config.allowed_paths or ([context.working_directory] if context.working_directory else []),
+            forbidden_paths=config.forbidden_paths,
+            timeout=self.agent_timeout,
+        )
+
         try:
-            # Extract the task from the payload
-            task_content = payload['messages'][-1]['content']
+            agent_result = await subagent.execute(task_content, agent_context)
 
-            # Create a Task tool invocation that will be processed by the slash command middleware
-            # This follows the Claude Code agent execution pattern
-            task_invocation = f"""Task({{
-  subagent_type: "{config.name.lower().replace(' ', '-')}",
-  description: "Execute agent task: {task_content[:100]}{'...' if len(task_content) > 100 else ''}",
-  prompt: "{task_content}"
-}})"""
+            status_label = {
+                AgentStatus.COMPLETED: "✅ Success",
+                AgentStatus.TIMEOUT: "⏱️ Timeout",
+                AgentStatus.FAILED: "❌ Failed",
+                AgentStatus.CANCELLED: "⚠️ Cancelled",
+            }.get(agent_result.status, agent_result.status.value.upper())
 
-            # For now, return a structured response indicating the task would be executed
-            # In a fully integrated system, this would trigger actual Task tool execution
-            agent_response = f"""# Agent Execution: {config.name}
+            output_lines = [f"# Agent Execution: {config.name}", ""]
+            output_lines.append(f"**Status**: {status_label}")
+            output_lines.append(f"**Duration**: {agent_result.execution_time:.2f}s")
+            output_lines.append(f"**Task**: {task_content}")
 
-**Task**: {task_content}
+            if config.allowed_paths:
+                output_lines.append(
+                    f"**Allowed Paths**: {', '.join(config.allowed_paths)}"
+                )
 
-**Agent Configuration**:
-- **Model**: {config.model}
-- **Temperature**: {config.temperature}
-- **Max Tokens**: {config.max_tokens}
-- **Available Tools**: {', '.join(config.tools) if config.tools else 'None'}
-- **Capabilities**: {', '.join(config.capabilities) if config.capabilities else 'None'}
+            if config.tools:
+                output_lines.append(
+                    f"**Tools**: {', '.join(config.tools)}"
+                )
 
-**Execution Method**: Task tool invocation
-```
-{task_invocation}
-```
+            if agent_result.output:
+                output_lines.append("\n**Output:**\n")
+                output_lines.append(agent_result.output.strip())
 
-**Status**: Agent task prepared for execution via Task tool
-**Note**: This execution requires integration with the Claude Code Task tool system for full functionality.
-"""
+            if agent_result.error:
+                output_lines.append("\n**Error:**\n")
+                output_lines.append(agent_result.error.strip())
 
-            # Add a small delay to simulate processing
-            await asyncio.sleep(0.2)
+            if agent_result.metadata:
+                output_lines.append("\n**Metadata:**\n")
+                output_lines.append(json.dumps(agent_result.metadata, indent=2))
 
-            return agent_response
+            return "\n".join(output_lines)
 
-        except Exception as e:
-            logger.error(f"Agent execution failed for {config.name}: {e}")
-            return f"""# Agent Execution Failed: {config.name}
-
-**Error**: {str(e)}
-**Task**: {payload.get('messages', [{}])[-1].get('content', 'Unknown task')}
-
-**Status**: Execution failed - please check agent configuration and system integration.
-"""
+        except Exception as exc:
+            logger.error("Agent execution failed for %s: %s", config.name, exc)
+            return (
+                f"# Agent Execution Failed: {config.name}\n\n"
+                f"**Error**: {exc}\n"
+                f"**Task**: {task_content}"
+            )
 
     async def execute_agents_parallel(self, agent_tasks: List[Tuple[str, str]],
                                     context: AgentExecutionContext) -> List[AgentResult]:

@@ -135,7 +135,7 @@ Invalid content
         md_path.write_text(sample_yaml_agent)
         
         # Scan directory
-        agent_files = list(temp_agent_dir.glob("*.{yaml,yml,json,md}"))
+        agent_files = list(temp_agent_dir.glob("*.yaml")) + list(temp_agent_dir.glob("*.yml")) + list(temp_agent_dir.glob("*.json")) + list(temp_agent_dir.glob("*.md"))
         assert len(agent_files) >= 3, "Should find all agent definition files"
         
         # Verify file types
@@ -238,13 +238,17 @@ class TestParallelAgentExecution:
     @pytest.fixture
     def mock_orchestrator(self):
         """Create a mock agent orchestrator."""
-        with patch('src.codex_plus.agent_orchestrator_middleware.AgentConfigLoader') as mock_loader:
-            orchestrator = AgentOrchestrationMiddleware(
-                config_loader=mock_loader,
-                max_concurrent_agents=3,
-                agent_timeout=30
-            )
-            return orchestrator
+        orchestrator = AgentOrchestrationMiddleware(
+            max_concurrent_agents=3,
+            agent_timeout=30
+        )
+        # Mock the config loader after initialization
+        orchestrator.config_loader = MagicMock()
+        orchestrator.agents = {
+            f"agent_{i}": MagicMock(name=f"Agent {i}")
+            for i in range(5)
+        }
+        return orchestrator
 
     @pytest.mark.asyncio
     async def test_concurrent_agent_limit(self, mock_orchestrator):
@@ -252,11 +256,9 @@ class TestParallelAgentExecution:
         # Create mock agent executions
         async def mock_agent_execution(agent_name: str, context: AgentExecutionContext):
             await asyncio.sleep(0.1)  # Simulate work
-            return AgentResult(
-                agent_name=agent_name,
-                success=True,
+            return AgentResult(agent_id=agent_name, task="Test task", success=True,
                 output=f"Result from {agent_name}",
-                execution_time=0.1
+                duration=0.1
             )
         
         # Patch execute_agent method
@@ -264,12 +266,7 @@ class TestParallelAgentExecution:
         
         # Create multiple agent contexts
         contexts = [
-            AgentExecutionContext(
-                task_description=f"Task {i}",
-                input_data={"index": i},
-                required_capabilities=["test"],
-                timeout_seconds=5
-            )
+            AgentExecutionContext(MagicMock())
             for i in range(5)
         ]
         
@@ -307,26 +304,13 @@ class TestParallelAgentExecution:
         """Test timeout handling for agent executions."""
         # Create slow agent execution
         async def slow_agent_execution(agent_name: str, context: AgentExecutionContext):
-            try:
-                await asyncio.sleep(10)  # Longer than timeout
-                return AgentResult(
-                    agent_name=agent_name,
-                    success=True,
-                    output="Should not reach here"
-                )
-            except asyncio.CancelledError:
-                return AgentResult(
-                    agent_name=agent_name,
-                    success=False,
-                    error="Execution cancelled due to timeout"
-                )
+            await asyncio.sleep(10)  # Longer than timeout
+            return AgentResult(agent_id=agent_name, task="Test task", success=True,
+                output="Should not reach here"
+            )
         
         # Set short timeout
-        context = AgentExecutionContext(
-            task_description="Slow task",
-            input_data={},
-            timeout_seconds=0.5
-        )
+        context = AgentExecutionContext(MagicMock())
         
         # Execute with timeout
         mock_orchestrator.execute_agent = slow_agent_execution
@@ -334,7 +318,7 @@ class TestParallelAgentExecution:
         try:
             result = await asyncio.wait_for(
                 mock_orchestrator.execute_agent("slow_agent", context),
-                timeout=context.timeout_seconds
+                timeout=0.5
             )
             assert False, "Should have timed out"
         except asyncio.TimeoutError:
@@ -349,9 +333,7 @@ class TestParallelAgentExecution:
             if "fail" in agent_name:
                 raise ValueError(f"Simulated error in {agent_name}")
             await asyncio.sleep(0.05)
-            return AgentResult(
-                agent_name=agent_name,
-                success=True,
+            return AgentResult(agent_id=agent_name, task="Test task", success=True,
                 output=f"Success from {agent_name}"
             )
         
@@ -360,10 +342,7 @@ class TestParallelAgentExecution:
         # Execute mixed agents
         agent_names = ["success_1", "fail_1", "success_2", "fail_2", "success_3"]
         contexts = [
-            AgentExecutionContext(
-                task_description=f"Task for {name}",
-                input_data={}
-            )
+            AgentExecutionContext(MagicMock())
             for name in agent_names
         ]
         
@@ -373,9 +352,7 @@ class TestParallelAgentExecution:
                 result = await mock_orchestrator.execute_agent(name, ctx)
                 results.append(result)
             except Exception as e:
-                results.append(AgentResult(
-                    agent_name=name,
-                    success=False,
+                results.append(AgentResult(agent_id=name, task="Test task", success=False,
                     error=str(e)
                 ))
         
@@ -394,21 +371,15 @@ class TestParallelAgentExecution:
             await asyncio.sleep(0.01)
             
             if "analyzer" in agent_name:
-                return AgentResult(
-                    agent_name=agent_name,
-                    success=True,
+                return AgentResult(agent_id=agent_name, task="Test task", success=True,
                     output={"analysis": "Code is clean", "score": 95}
                 )
             elif "validator" in agent_name:
-                return AgentResult(
-                    agent_name=agent_name,
-                    success=True,
+                return AgentResult(agent_id=agent_name, task="Test task", success=True,
                     output=["Test 1: PASS", "Test 2: PASS", "Test 3: FAIL"]
                 )
             else:
-                return AgentResult(
-                    agent_name=agent_name,
-                    success=True,
+                return AgentResult(agent_id=agent_name, task="Test task", success=True,
                     output="Generic result"
                 )
         
@@ -416,9 +387,9 @@ class TestParallelAgentExecution:
         
         # Execute multiple agents
         agent_configs = [
-            ("code_analyzer", AgentExecutionContext(task_description="Analyze code")),
-            ("test_validator", AgentExecutionContext(task_description="Validate tests")),
-            ("doc_generator", AgentExecutionContext(task_description="Generate docs"))
+            ("code_analyzer", AgentExecutionContext(MagicMock())),
+            ("test_validator", AgentExecutionContext(MagicMock())),
+            ("doc_generator", AgentExecutionContext(MagicMock()))
         ]
         
         results = []
@@ -433,7 +404,7 @@ class TestParallelAgentExecution:
                 "successful": sum(1 for r in results if r.success),
                 "failed": sum(1 for r in results if not r.success)
             },
-            "results": {r.agent_name: r.output for r in results}
+            "results": {r.agent_id: r.output for r in results}
         }
         
         # Validate aggregation

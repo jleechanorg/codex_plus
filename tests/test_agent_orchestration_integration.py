@@ -31,6 +31,7 @@ from src.codex_plus.agent_orchestrator_middleware import (
     AgentResult,
     create_agent_orchestrator_middleware
 )
+from src.codex_plus.subagents import SubAgent
 from src.codex_plus.subagents.config_loader import (
     AgentConfiguration,
     AgentConfigurationLoader
@@ -636,7 +637,7 @@ class TestErrorHandlingAndEdgeCases:
         assert len(agents) == 0
 
     @pytest.mark.asyncio
-    async def test_agent_request_execution_integration(self, middleware_with_agents):
+    async def test_agent_request_execution_integration(self, middleware_with_agents, execution_context):
         """Test the actual agent request execution method."""
         config = middleware_with_agents.agents["code-reviewer"]
         payload = {
@@ -650,12 +651,19 @@ class TestErrorHandlingAndEdgeCases:
         }
 
         # Test the actual execution method
-        result = await middleware_with_agents._execute_agent_request(payload, config)
+        with patch.object(SubAgent, "_execute_via_claude_cli", new=AsyncMock(return_value="Simulated response")):
+            result = await middleware_with_agents._execute_agent_request(
+                "code-reviewer",
+                payload,
+                config,
+                execution_context,
+            )
 
         assert isinstance(result, str)
         assert len(result) > 0
         assert "Agent Execution:" in result
         assert config.name in result
+        assert "Simulated response" in result
 
 
 class TestIntegrationWithMiddlewareChain:
