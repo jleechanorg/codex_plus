@@ -6,7 +6,8 @@ type: UserPromptSubmit
 priority: 50
 enabled: true
 """
-import json, sys
+import json
+import sys
 
 if __name__ == "__main__":
     print(json.dumps({

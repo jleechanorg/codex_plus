@@ -163,7 +163,7 @@ async def test_agent_detection():
 
                 elif test_case["expected_type"] == "auto_delegate":
                     if test_case["expected_task"] in invocation.get("task", ""):
-                        print(f"✅ PASSED: Correct task detected")
+                        print("✅ PASSED: Correct task detected")
                     else:
                         print(f"❌ FAILED: Expected task '{test_case['expected_task']}', got '{invocation.get('task')}'")
             else:
@@ -216,7 +216,7 @@ async def test_agent_execution():
     try:
         result = await middleware.execute_agent(agent_id, task, context)
 
-        print(f"✅ PASSED: Agent execution completed")
+        print("✅ PASSED: Agent execution completed")
         print(f"   Agent ID: {result.agent_id}")
         print(f"   Success: {result.success}")
         print(f"   Duration: {result.duration:.2f}s")

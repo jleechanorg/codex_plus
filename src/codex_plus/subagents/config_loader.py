@@ -7,11 +7,10 @@ https://docs.claude.com/en/docs/claude-code/sub-agents
 
 import json
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set
 
 import yaml
 

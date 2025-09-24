@@ -1,0 +1,13 @@
+{
+  "coordination_overhead_ms": 0.11386404504309168,
+  "task_execution_ms": 0.060817173549107144,
+  "agent_init_ms": 0.00019754682268415178,
+  "result_processing_ms": 2.7247837611607144e-05,
+  "parallel_overhead_ms": 75.0,
+  "memory_usage_mb": 256.0,
+  "samples_count": 248,
+  "measurement_period_hours": 1.0,
+  "confidence_interval": 0.95,
+  "established_at": "2025-09-24T00:55:49.926314",
+  "last_updated": "2025-09-24T00:55:49.926315"
+}

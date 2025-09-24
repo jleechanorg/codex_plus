@@ -10,12 +10,10 @@ Usage:
 """
 
 import json
-import os
 import sys
 import tempfile
 import traceback
 from pathlib import Path
-from typing import Dict, List
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -56,7 +54,7 @@ class ValidationResults:
         print(f"Tests Failed: {self.tests_failed}")
 
         if self.failures:
-            print(f"\nFAILURES:")
+            print("\nFAILURES:")
             for failure in self.failures:
                 print(f"  • {failure}")
 
@@ -918,15 +916,15 @@ def main():
             print("✅ Error handling is robust")
             print("✅ Default agent creation works properly")
 
-            print(f"\n📋 Key Features Validated:")
-            print(f"  • YAML frontmatter parsing with full Claude Code CLI compatibility")
-            print(f"  • Configuration validation with proper error reporting")
-            print(f"  • Directory-based agent loading (.claude/agents priority)")
-            print(f"  • Backward compatibility with JSON configurations")
-            print(f"  • Robust error handling for invalid files")
-            print(f"  • Default agent templates following best practices")
-            print(f"  • Mixed format support (YAML + JSON)")
-            print(f"  • Agent listing and management capabilities")
+            print("\n📋 Key Features Validated:")
+            print("  • YAML frontmatter parsing with full Claude Code CLI compatibility")
+            print("  • Configuration validation with proper error reporting")
+            print("  • Directory-based agent loading (.claude/agents priority)")
+            print("  • Backward compatibility with JSON configurations")
+            print("  • Robust error handling for invalid files")
+            print("  • Default agent templates following best practices")
+            print("  • Mixed format support (YAML + JSON)")
+            print("  • Agent listing and management capabilities")
 
             return 0
         else:

@@ -3,10 +3,8 @@
 Simple test script for agent management API endpoints
 """
 
-import json
 import requests
 import sys
-import time
 
 BASE_URL = "http://localhost:10000"
 
@@ -46,7 +44,7 @@ def test_agent_api():
         response = requests.get(f"{BASE_URL}/agents")
         if response.status_code == 200:
             agents = response.json()
-            print(f"✅ List agents endpoint working")
+            print("✅ List agents endpoint working")
             print(f"   Found {len(agents)} agents")
             for agent in agents:
                 print(f"   - {agent['id']}: {agent['name']}")
@@ -73,7 +71,7 @@ def test_agent_api():
         if response.status_code == 201:
             created_agent = response.json()
             agent_id = created_agent['id']
-            print(f"✅ Create agent endpoint working")
+            print("✅ Create agent endpoint working")
             print(f"   Created agent: {agent_id}")
 
             # Test get specific agent endpoint
@@ -81,7 +79,7 @@ def test_agent_api():
             get_response = requests.get(f"{BASE_URL}/agents/{agent_id}")
             if get_response.status_code == 200:
                 agent_data = get_response.json()
-                print(f"✅ Get agent endpoint working")
+                print("✅ Get agent endpoint working")
                 print(f"   Retrieved: {agent_data['name']}")
             else:
                 print(f"❌ Get agent endpoint failed: {get_response.status_code}")
@@ -95,7 +93,7 @@ def test_agent_api():
             update_response = requests.put(f"{BASE_URL}/agents/{agent_id}", json=update_data)
             if update_response.status_code == 200:
                 updated_agent = update_response.json()
-                print(f"✅ Update agent endpoint working")
+                print("✅ Update agent endpoint working")
                 print(f"   Updated description: {updated_agent['description']}")
                 print(f"   Updated temperature: {updated_agent['temperature']}")
             else:
@@ -111,7 +109,7 @@ def test_agent_api():
             invoke_response = requests.post(f"{BASE_URL}/agents/{agent_id}/invoke", json=invoke_data)
             if invoke_response.status_code == 200:
                 invoke_result = invoke_response.json()
-                print(f"✅ Invoke agent endpoint working")
+                print("✅ Invoke agent endpoint working")
                 print(f"   Success: {invoke_result['success']}")
                 print(f"   Duration: {invoke_result['duration']:.2f}s")
                 if invoke_result['output']:
@@ -130,7 +128,7 @@ def test_agent_api():
             multi_response = requests.post(f"{BASE_URL}/agents/invoke-multiple", json=multi_invoke_data)
             if multi_response.status_code == 200:
                 multi_result = multi_response.json()
-                print(f"✅ Invoke multiple agents endpoint working")
+                print("✅ Invoke multiple agents endpoint working")
                 print(f"   Results: {multi_result['successful_agents']}/{multi_result['total_agents']} successful")
                 print(f"   Total duration: {multi_result['total_duration']:.2f}s")
             else:
@@ -141,7 +139,7 @@ def test_agent_api():
             print("\n9. Testing delete agent endpoint...")
             delete_response = requests.delete(f"{BASE_URL}/agents/{agent_id}")
             if delete_response.status_code == 204:
-                print(f"✅ Delete agent endpoint working")
+                print("✅ Delete agent endpoint working")
                 print(f"   Deleted agent: {agent_id}")
             else:
                 print(f"❌ Delete agent endpoint failed: {delete_response.status_code}")

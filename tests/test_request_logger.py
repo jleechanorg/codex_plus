@@ -34,42 +34,65 @@ class TestRequestLogger:
         """Test asyncio event loop handling when loop is running"""
         body = b'{"test": "data"}'
 
-        with patch('asyncio.get_running_loop') as mock_get_running_loop:
-            mock_loop = Mock()
-            mock_get_running_loop.return_value = mock_loop
+        async_logger = AsyncMock(return_value=None)
 
-            RequestLogger.log_request_payload(body, "responses")
+        with patch.object(RequestLogger, '_log_payload_to_file_async', new=async_logger):
+            with patch('asyncio.get_running_loop') as mock_get_running_loop:
+                def consume_task(coro):
+                    loop = asyncio.new_event_loop()
+                    try:
+                        loop.run_until_complete(coro)
+                    finally:
+                        loop.close()
+                    return Mock(name='task')
 
-            # Should use get_running_loop and create_task
-            mock_get_running_loop.assert_called_once()
-            mock_loop.create_task.assert_called_once()
+                mock_loop = Mock()
+                mock_loop.create_task = Mock(side_effect=consume_task)
+                mock_get_running_loop.return_value = mock_loop
+
+                RequestLogger.log_request_payload(body, "responses")
+
+                mock_get_running_loop.assert_called_once()
+                mock_loop.create_task.assert_called_once()
+                async_logger.assert_called_once_with(body)
 
     def test_asyncio_event_loop_handling_without_running_loop(self):
         """Test asyncio event loop handling when no loop is running"""
         body = b'{"test": "data"}'
 
-        with patch('asyncio.get_running_loop', side_effect=RuntimeError("No running loop")):
-            with patch('asyncio.run') as mock_run:
-                RequestLogger.log_request_payload(body, "responses")
+        async_logger = AsyncMock(return_value=None)
 
-                # Should fall back to asyncio.run
+        with patch.object(RequestLogger, '_log_payload_to_file_async', new=async_logger):
+            with patch('asyncio.get_running_loop', side_effect=RuntimeError("No running loop")):
+                def run_side_effect(coro):
+                    loop = asyncio.new_event_loop()
+                    try:
+                        loop.run_until_complete(coro)
+                    finally:
+                        loop.close()
+                    return None
+
+                with patch('asyncio.run', side_effect=run_side_effect) as mock_run:
+                    RequestLogger.log_request_payload(body, "responses")
+
                 mock_run.assert_called_once()
+                async_logger.assert_called_once_with(body)
 
     @pytest.mark.asyncio
     async def test_json_parsing_with_valid_json(self):
         """Test JSON parsing with valid JSON data"""
         valid_json = b'{"key": "value", "instructions": "test instruction"}'
 
-        with patch('asyncio.to_thread'):
+        async_to_thread = AsyncMock(return_value=None)
+        with patch('asyncio.to_thread', new=async_to_thread):
             with patch('aiofiles.open') as mock_open:
-                # Mock the async context manager
                 mock_file = AsyncMock()
                 mock_open.return_value.__aenter__.return_value = mock_file
 
                 await RequestLogger._log_payload_to_file_async(valid_json)
 
-                # Should parse JSON successfully and call file operations
-                assert mock_open.call_count >= 1
+        assert async_to_thread.await_count >= 1
+        assert mock_open.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_json_parsing_with_invalid_json(self):
@@ -88,29 +111,29 @@ class TestRequestLogger:
         """Test that directory creation uses asyncio.to_thread"""
         valid_json = b'{"test": "data"}'
 
-        with patch('asyncio.to_thread') as mock_to_thread:
+        async_to_thread = AsyncMock(return_value=None)
+        with patch('asyncio.to_thread', new=async_to_thread):
             with patch('aiofiles.open') as mock_open:
                 mock_file = AsyncMock()
                 mock_open.return_value.__aenter__.return_value = mock_file
 
                 await RequestLogger._log_payload_to_file_async(valid_json)
 
-                # Should use asyncio.to_thread for directory creation
-                mock_to_thread.assert_called()
+        assert async_to_thread.await_count >= 1
 
     @pytest.mark.asyncio
     async def test_file_writing_uses_aiofiles(self):
         """Test that file writing uses aiofiles instead of subprocess"""
         valid_json = b'{"test": "data", "instructions": "test instruction"}'
 
-        with patch('asyncio.to_thread'):
+        async_to_thread = AsyncMock(return_value=None)
+        with patch('asyncio.to_thread', new=async_to_thread):
             with patch('aiofiles.open') as mock_open:
                 mock_file = AsyncMock()
                 mock_open.return_value.__aenter__.return_value = mock_file
 
                 await RequestLogger._log_payload_to_file_async(valid_json)
 
-                # Should use aiofiles.open for file operations
                 assert mock_open.call_count >= 1
                 mock_file.write.assert_called()
 
@@ -119,14 +142,14 @@ class TestRequestLogger:
         """Test that instructions file is created when instructions are present"""
         json_with_instructions = b'{"test": "data", "instructions": "test instruction"}'
 
-        with patch('asyncio.to_thread'):
+        async_to_thread = AsyncMock(return_value=None)
+        with patch('asyncio.to_thread', new=async_to_thread):
             with patch('aiofiles.open') as mock_open:
                 mock_file = AsyncMock()
                 mock_open.return_value.__aenter__.return_value = mock_file
 
                 await RequestLogger._log_payload_to_file_async(json_with_instructions)
 
-                # Should open both payload and instructions files
                 assert mock_open.call_count == 2
 
     @pytest.mark.asyncio
@@ -134,14 +157,14 @@ class TestRequestLogger:
         """Test that instructions file is skipped when instructions is not a string"""
         json_with_non_string_instructions = b'{"test": "data", "instructions": 123}'
 
-        with patch('asyncio.to_thread'):
+        async_to_thread = AsyncMock(return_value=None)
+        with patch('asyncio.to_thread', new=async_to_thread):
             with patch('aiofiles.open') as mock_open:
                 mock_file = AsyncMock()
                 mock_open.return_value.__aenter__.return_value = mock_file
 
                 await RequestLogger._log_payload_to_file_async(json_with_non_string_instructions)
 
-                # Should only open payload file, not instructions
                 assert mock_open.call_count == 1
 
     @pytest.mark.asyncio
@@ -154,32 +177,29 @@ class TestRequestLogger:
 
         for malicious_branch in malicious_branches:
             with patch('asyncio.create_subprocess_exec') as mock_subprocess:
-                # Mock git command to return malicious branch name
                 mock_proc = AsyncMock()
                 mock_proc.communicate.return_value = (malicious_branch.encode(), b'')
                 mock_subprocess.return_value = mock_proc
 
-                with patch('asyncio.to_thread') as mock_to_thread:
+                async_to_thread = AsyncMock(return_value=None)
+                with patch('asyncio.to_thread', new=async_to_thread):
                     await RequestLogger._log_payload_to_file_async(valid_json)
 
-                    # Should use "unknown" as fallback for malicious branch names
-                    if mock_to_thread.called:
-                        call_args = mock_to_thread.call_args[0]
-                        # The path should contain "unknown", not the malicious branch
-                        assert "unknown" in str(call_args[0])
+                if async_to_thread.await_count:
+                    call_args = async_to_thread.call_args.args
+                    assert "unknown" in str(call_args[0])
 
     @pytest.mark.asyncio
     async def test_error_handling_in_file_operations(self):
         """Test that file operation errors are handled gracefully"""
         valid_json = b'{"test": "data"}'
 
-        with patch('asyncio.to_thread'):
+        async_to_thread = AsyncMock(return_value=None)
+        with patch('asyncio.to_thread', new=async_to_thread):
             with patch('aiofiles.open', side_effect=IOError("File write error")):
                 with patch('codex_plus.request_logger.logger') as mock_logger:
-                    # Should not raise exception
                     await RequestLogger._log_payload_to_file_async(valid_json)
 
-                    # Should log debug message about failure
                     mock_logger.debug.assert_called()
                     assert "Async file logging failed" in str(mock_logger.debug.call_args)
 
@@ -189,15 +209,25 @@ class TestRequestLogger:
         valid_json = b'{"test": "data"}'
 
         with patch('asyncio.create_subprocess_exec') as mock_subprocess:
-            with patch('asyncio.wait_for', side_effect=asyncio.TimeoutError):
-                with patch('asyncio.to_thread'):
+            mock_process = AsyncMock()
+            mock_process.communicate.return_value = (b'', b'')
+            mock_subprocess.return_value = mock_process
+
+            async def timeout_side_effect(coro, *_args, **_kwargs):
+                try:
+                    await coro
+                finally:
+                    raise asyncio.TimeoutError
+
+            with patch('asyncio.wait_for', side_effect=timeout_side_effect):
+                async_to_thread = AsyncMock(return_value=None)
+                with patch('asyncio.to_thread', new=async_to_thread):
                     with patch('aiofiles.open') as mock_open:
                         mock_file = AsyncMock()
                         mock_open.return_value.__aenter__.return_value = mock_file
 
                         await RequestLogger._log_payload_to_file_async(valid_json)
 
-                        # Should continue with "unknown" branch name
                         mock_open.assert_called()
 
     def test_exception_handling_in_main_method(self):

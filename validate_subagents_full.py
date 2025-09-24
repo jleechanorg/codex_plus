@@ -5,8 +5,6 @@ Verifies all components are production-ready.
 """
 
 import asyncio
-import json
-import os
 import sys
 from pathlib import Path
 
@@ -41,7 +39,7 @@ async def validate_system():
     print("-" * 30)
     orchestrator = AgentOrchestrationMiddleware()
     status = orchestrator.get_agent_status()
-    print(f"✅ Orchestrator initialized")
+    print("✅ Orchestrator initialized")
     print(f"   - Max concurrent agents: {status['max_concurrent_agents']}")
     print(f"   - Agent timeout: {status['agent_timeout']}s")
     print(f"   - Loaded agents: {status['loaded_agents']}")
@@ -148,7 +146,7 @@ async def validate_system():
         AgentResult("test-agent-2", "Test task 2", False, "", "Error occurred", 0.5)
     ]
     formatted = orchestrator.format_agent_results(test_results, context)
-    print(f"✅ Result formatting successful")
+    print("✅ Result formatting successful")
     print(f"   - Output length: {len(formatted)} chars")
     print(f"   - Contains summary: {'Summary' in formatted}")
     print(f"   - Contains duration: {'Duration' in formatted}")
@@ -161,7 +159,7 @@ async def validate_system():
     test_context = AgentExecutionContext(mock_request, "/etc/passwd")
     if 'code-reviewer' in agents:
         issues = orchestrator.validate_agent_access('code-reviewer', test_context)
-        print(f"✅ Path access validation working")
+        print("✅ Path access validation working")
         print(f"   - Forbidden path detected: {len(issues) > 0}")
 
     # 8. Configuration Persistence
@@ -172,12 +170,12 @@ async def validate_system():
     if agents:
         first_agent = list(agents.values())[0]
         yaml_output = first_agent.to_yaml()
-        print(f"✅ YAML serialization successful")
+        print("✅ YAML serialization successful")
         print(f"   - Output length: {len(yaml_output)} chars")
 
         # Test round-trip
         parsed = AgentConfiguration.from_yaml(yaml_output)
-        print(f"✅ Round-trip parsing successful")
+        print("✅ Round-trip parsing successful")
         print(f"   - Agent name: {parsed.name}")
 
     print("\n" + "=" * 60)

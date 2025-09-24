@@ -6,7 +6,7 @@ import json
 import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from src.codex_plus.subagents.config_loader import (
     AgentConfiguration,

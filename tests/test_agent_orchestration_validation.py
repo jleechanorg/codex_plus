@@ -6,11 +6,8 @@ Based on Anthropic Claude Code CLI subagent specifications.
 
 import asyncio
 import json
-import os
-import tempfile
-from pathlib import Path
-from typing import Any, Dict, List
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from typing import Any, Dict
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -316,7 +313,7 @@ class TestParallelAgentExecution:
         mock_orchestrator.execute_agent = slow_agent_execution
         
         try:
-            result = await asyncio.wait_for(
+            await asyncio.wait_for(
                 mock_orchestrator.execute_agent("slow_agent", context),
                 timeout=0.5
             )

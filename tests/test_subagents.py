@@ -4,10 +4,9 @@ Tests for the Codex Plus Subagent System.
 
 import asyncio
 import json
-import os
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 

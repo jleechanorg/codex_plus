@@ -34,14 +34,9 @@ from contextlib import asynccontextmanager
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-from curl_cffi import requests
 import logging
 import json as _json
 import json
-import sys
-import os
-import time
-import re
 from urllib.parse import urlparse
 from .status_line_middleware import HookMiddleware
 
@@ -219,18 +214,18 @@ def _validate_upstream_url(url: str) -> bool:
 
 # Initialize slash command middleware
 logger.info("Initializing LLM execution middleware (instruction mode)")
-from .llm_execution_middleware import create_llm_execution_middleware
+from .llm_execution_middleware import create_llm_execution_middleware  # noqa: E402
 # ⚠️ DO NOT MODIFY: This creates the core proxy forwarding with curl_cffi
 slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
 
 # Initialize agent orchestrator middleware
 logger.info("Initializing agent orchestrator middleware")
-from .agent_orchestrator_middleware import create_agent_orchestrator_middleware
+from .agent_orchestrator_middleware import create_agent_orchestrator_middleware  # noqa: E402
 agent_middleware = create_agent_orchestrator_middleware(max_concurrent_agents=3, agent_timeout=30)
 logger.info(f"🤖 Agent orchestrator loaded: {len(agent_middleware.agents)} agents available")
 
 # ✅ SAFE TO MODIFY: Hook system imports and processing
-from .hooks import (
+from .hooks import (  # noqa: E402
     process_pre_input_hooks,
     process_post_output_hooks,
     settings_stop,
@@ -482,7 +477,6 @@ async def delete_agent(agent_id: str):
 
         # Delete agent file
         import os
-        from pathlib import Path
 
         agents_dir = agent_middleware.config_loader.agents_dir
         yaml_file = agents_dir / f"{agent_id}.yaml"

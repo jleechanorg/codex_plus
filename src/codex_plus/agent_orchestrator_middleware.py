@@ -22,13 +22,10 @@ import json
 import logging
 import re
 import time
-from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-from urllib.parse import parse_qs, urlparse
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from fastapi import HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import Request
 
 from .subagents import AgentCapability, AgentContext, AgentStatus, SubAgent
 from .subagents.config_loader import AgentConfiguration, AgentConfigurationLoader
@@ -318,7 +315,7 @@ class AgentOrchestrationMiddleware:
                         continue
 
                 if not allowed:
-                    issues.append(f"Access denied: working directory not in allowed paths")
+                    issues.append("Access denied: working directory not in allowed paths")
 
         return issues
 
