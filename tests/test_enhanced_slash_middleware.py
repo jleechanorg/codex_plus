@@ -3,7 +3,6 @@
 Adapted tests for LLMExecutionMiddleware (replacing EnhancedSlashCommandMiddleware)
 """
 import json
-import pytest
 
 from codex_plus.llm_execution_middleware import LLMExecutionMiddleware, create_llm_execution_middleware
 

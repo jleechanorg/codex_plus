@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
-import os
-import json
 from pathlib import Path
 
-import pytest
 
 from codex_plus.llm_execution_middleware import LLMExecutionMiddleware, create_llm_execution_middleware
 
@@ -26,11 +23,15 @@ def test_no_injection_for_plain_text():
 
 def test_find_command_file_precedence(tmp_path):
     mw: LLMExecutionMiddleware = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
-    codex_dir = Path(".codexplus/commands"); codex_dir.mkdir(parents=True, exist_ok=True)
-    claude_dir = Path(".claude/commands"); claude_dir.mkdir(parents=True, exist_ok=True)
+    codex_dir = Path(".codexplus/commands")
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    claude_dir = Path(".claude/commands")
+    claude_dir.mkdir(parents=True, exist_ok=True)
     name = "dupfile"
-    codex_file = codex_dir / f"{name}.md"; codex_file.write_text("codex version", encoding="utf-8")
-    claude_file = claude_dir / f"{name}.md"; claude_file.write_text("claude version", encoding="utf-8")
+    codex_file = codex_dir / f"{name}.md"
+    codex_file.write_text("codex version", encoding="utf-8")
+    claude_file = claude_dir / f"{name}.md"
+    claude_file.write_text("claude version", encoding="utf-8")
     try:
         f = mw.find_command_file(name)
         assert f is not None

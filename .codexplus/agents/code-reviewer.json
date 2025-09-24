@@ -1,0 +1,18 @@
+{
+  "id": "code-reviewer",
+  "name": "Code Review Agent",
+  "description": "Specialized in code review, security analysis, and best practices",
+  "capabilities": [
+    "code_analysis",
+    "read_files",
+    "documentation"
+  ],
+  "config": {
+    "languages": [
+      "python",
+      "javascript",
+      "typescript"
+    ],
+    "review_depth": "comprehensive"
+  }
+}

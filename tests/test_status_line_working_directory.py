@@ -14,10 +14,8 @@ import pytest
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
-import asyncio
+from unittest.mock import Mock, patch
 from fastapi import Request
-from fastapi.responses import JSONResponse
 
 from src.codex_plus.hooks import HookSystem
 from src.codex_plus.status_line_middleware import HookMiddleware
@@ -190,7 +188,7 @@ class TestWorkingDirectoryExtraction:
         for body in malformed_bodies:
             try:
                 cwd_match = re.search(r'<cwd>([^<]+)</cwd>', body.decode('utf-8', errors='ignore'))
-                working_directory = cwd_match.group(1) if cwd_match else None
+                _ = cwd_match.group(1) if cwd_match else None
                 # Should not crash
                 assert True
             except Exception as e:
@@ -361,7 +359,6 @@ class TestEndToEndIntegration:
         # 5. Claude receives the proper context
 
         # For now, just verify the integration points exist
-        from src.codex_plus.status_line_middleware import HookMiddleware
         from src.codex_plus.llm_execution_middleware import LLMExecutionMiddleware
 
         # Verify classes can be imported and instantiated

@@ -1,0 +1,66 @@
+{
+  "goal_id": "2025-09-22-0854-codex-subagent-system",
+  "created_at": "2025-09-22T08:54:00Z",
+  "status": "active",
+  "goal_type": "system_architecture_enhancement",
+  "complexity": "high",
+  "domain": "http_proxy_middleware_ai_agents",
+  "target_project": "codex_plus",
+  "estimated_iterations": 10,
+  "reference_documentation": [
+    {
+      "title": "Claude Code Subagents",
+      "url": "https://docs.claude.com/en/docs/claude-code/sub-agents",
+      "type": "primary_specification"
+    },
+    {
+      "title": "Claude Code SDK",
+      "url": "https://docs.claude.com/en/docs/claude-code/sdk",
+      "type": "implementation_guide"
+    }
+  ],
+  "key_components": [
+    "configuration_system",
+    "orchestration_engine",
+    "security_integration",
+    "result_aggregation",
+    "management_api",
+    "delegation_logic",
+    "monitoring_system"
+  ],
+  "success_criteria_count": 10,
+  "validation_checkpoints": [
+    "configuration_loading",
+    "parallel_execution",
+    "security_integration",
+    "result_aggregation",
+    "management_api",
+    "performance_benchmarks",
+    "compliance_verification"
+  ],
+  "claude_code_compliance": {
+    "yaml_frontmatter": true,
+    "separate_context_windows": true,
+    "auto_delegation": true,
+    "directory_structure": ".claude/agents/",
+    "single_purpose_design": true
+  },
+  "technical_requirements": {
+    "framework": "FastAPI",
+    "concurrency": "AsyncIO",
+    "api_style": "RESTful",
+    "configuration_format": ["YAML", "JSON"],
+    "minimum_concurrent_agents": 10,
+    "p95_response_time_ms": 2000,
+    "target_throughput_rpm": 100,
+    "availability_target": "99.9%"
+  },
+  "implementation_phases": [
+    "research_and_design",
+    "core_infrastructure",
+    "agent_orchestration",
+    "management_api",
+    "integration_and_testing",
+    "monitoring_and_documentation"
+  ]
+}

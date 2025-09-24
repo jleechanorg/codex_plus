@@ -3,8 +3,6 @@
 Test /copilot command through the Codex Plus proxy
 Uses the exact same structure as real Codex CLI requests
 """
-import json
-import requests
 
 def test_copilot_command():
     """Smoke test structure for a /copilot-like command payload.
@@ -47,13 +45,9 @@ def test_copilot_command():
     
     # Send request through proxy (no auth token needed for test)
     proxy_url = "http://127.0.0.1:3000/responses"
-    headers = {
-        "Content-Type": "application/json"
-    }
-    
     print("🧪 Testing /copilot command through Codex Plus proxy...")
     print(f"📡 URL: {proxy_url}")
-    print(f"📝 Command: /copilot")
+    print("📝 Command: /copilot")
     
     # Do not make a network call here; only validate payload shape
     # This keeps the test hermetic and unambiguous.

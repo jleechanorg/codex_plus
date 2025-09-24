@@ -1,0 +1,18 @@
+{
+  "id": "test-runner",
+  "name": "Test Execution Agent",
+  "description": "Executes tests, analyzes coverage, and validates implementations",
+  "capabilities": [
+    "test_execution",
+    "execute_commands",
+    "read_files"
+  ],
+  "config": {
+    "test_frameworks": [
+      "pytest",
+      "jest",
+      "mocha"
+    ],
+    "coverage_threshold": 80
+  }
+}

@@ -1,0 +1,248 @@
+{
+  "validation_timestamp": 1758684314.4866638,
+  "total_tests": 22,
+  "passed_tests": 22,
+  "failed_tests": 0,
+  "success_rate": 100.0,
+  "test_results": [
+    {
+      "test": "environment_setup",
+      "passed": true,
+      "message": "Test environment ready",
+      "details": {}
+    },
+    {
+      "test": "basic_metric_recording",
+      "passed": true,
+      "message": "Metric recorded successfully (1 new metrics)",
+      "details": {}
+    },
+    {
+      "test": "performance_timer",
+      "passed": true,
+      "message": "Performance timer recorded metric (1 new)",
+      "details": {}
+    },
+    {
+      "test": "coordination_overhead_validation",
+      "passed": true,
+      "message": "Average overhead: 44.36ms",
+      "details": {
+        "validated": true,
+        "avg_coordination_overhead_ms": 44.36382380398837,
+        "p95_coordination_overhead_ms": 44.36382380398837,
+        "samples_analyzed": 11,
+        "baseline_overhead_ms": 0.25731119616278286,
+        "meets_sub_200ms_requirement": true,
+        "meets_consistency_requirement": true,
+        "recommendations": [],
+        "baseline_established_at": "2025-09-23T20:20:39.943380",
+        "validation_timestamp": "2025-09-23T20:25:14.482628"
+      }
+    },
+    {
+      "test": "sub_200ms_requirement",
+      "passed": true,
+      "message": "Average overhead 44.36ms meets 200ms requirement",
+      "details": {}
+    },
+    {
+      "test": "baseline_establishment",
+      "passed": true,
+      "message": "Baseline established with 62 samples",
+      "details": {
+        "coordination_overhead_ms": 44.285812468755815,
+        "task_execution_ms": 407.2751712799072,
+        "agent_init_ms": 21.8,
+        "result_processing_ms": 13.1,
+        "parallel_overhead_ms": 74
+      }
+    },
+    {
+      "test": "baseline_coordination_overhead_spec",
+      "passed": true,
+      "message": "Baseline coordination overhead: 44.29ms",
+      "details": {}
+    },
+    {
+      "test": "task_api_performance_stats",
+      "passed": true,
+      "message": "Performance statistics retrieved",
+      "details": {
+        "monitoring_enabled": true
+      }
+    },
+    {
+      "test": "task_api_baseline_establishment",
+      "passed": true,
+      "message": "Baseline API result: Insufficient metrics to establish baseline",
+      "details": {
+        "success": false,
+        "message": "Insufficient metrics to establish baseline"
+      }
+    },
+    {
+      "test": "task_api_execution",
+      "passed": true,
+      "message": "Task execution succeeded",
+      "details": {
+        "success": true,
+        "has_execution_time": true,
+        "metadata_keys": [
+          "agent_id",
+          "task_id",
+          "status",
+          "execution_time",
+          "iterations_used"
+        ]
+      }
+    },
+    {
+      "test": "task_execution_generates_metrics",
+      "passed": true,
+      "message": "Task execution generated performance metrics",
+      "details": {}
+    },
+    {
+      "test": "parallel_execution",
+      "passed": true,
+      "message": "Executed 3 parallel tasks, 3 successful",
+      "details": {
+        "task_count": 3,
+        "successful": 3
+      }
+    },
+    {
+      "test": "parallel_coordination_metrics",
+      "passed": true,
+      "message": "Recorded 13 parallel coordination metrics",
+      "details": {}
+    },
+    {
+      "test": "threshold_validation",
+      "passed": true,
+      "message": "Threshold validation completed",
+      "details": {
+        "validated": false,
+        "avg_coordination_overhead_ms": 57.0070466706247,
+        "p95_coordination_overhead_ms": 250,
+        "samples_analyzed": 33,
+        "baseline_overhead_ms": 44.285812468755815,
+        "meets_sub_200ms_requirement": true,
+        "meets_consistency_requirement": false,
+        "recommendations": [
+          "95th percentile coordination overhead (250.0ms) exceeds 250ms",
+          "High variance in coordination overhead indicates instability"
+        ],
+        "baseline_established_at": "2025-09-23T20:25:14.483205",
+        "validation_timestamp": "2025-09-23T20:25:14.485600"
+      }
+    },
+    {
+      "test": "threshold_warning_system",
+      "passed": true,
+      "message": "Recent average: 57.01ms, warnings not expected",
+      "details": {}
+    },
+    {
+      "test": "ci_cd_export_api",
+      "passed": true,
+      "message": "CI/CD metrics exported successfully",
+      "details": {
+        "meets_requirements": false,
+        "coordination_overhead_ms": 57.0070466706247,
+        "overall_health": "excellent"
+      }
+    },
+    {
+      "test": "ci_cd_export_file",
+      "passed": true,
+      "message": "Export file created at /var/folders/j0/byd1z6px50v88lf679bgt0h00000gn/T/perf_monitor_test_bortxygy/ci_metrics.json",
+      "details": {}
+    },
+    {
+      "test": "ci_cd_export_format",
+      "passed": true,
+      "message": "Export file has required fields: ['performance_validation', 'coordination_overhead_ms', 'overall_health', 'meets_requirements']",
+      "details": {}
+    },
+    {
+      "test": "performance_report_generation",
+      "passed": true,
+      "message": "Performance report generated successfully",
+      "details": {
+        "report_id": "perf_report_1758684314",
+        "avg_coordination_overhead": 57.0070466706247,
+        "overall_health": "excellent",
+        "recommendations_count": 1,
+        "metrics_included": 89
+      }
+    },
+    {
+      "test": "reasonable_coordination_overhead",
+      "passed": true,
+      "message": "Coordination overhead 57.01ms is reasonable",
+      "details": {}
+    },
+    {
+      "test": "memory_usage_tracking",
+      "passed": true,
+      "message": "Added 100 memory usage metrics",
+      "details": {}
+    },
+    {
+      "test": "memory_limit_respected",
+      "passed": true,
+      "message": "Metrics count (189) within memory limit",
+      "details": {}
+    }
+  ],
+  "final_performance_stats": {
+    "api_level": "Task API",
+    "manager_statistics": {
+      "monitoring_enabled": true,
+      "baseline_established": true,
+      "coordination_overhead": {
+        "avg_ms": 57.0070466706247,
+        "p95_ms": 250,
+        "meets_200ms_requirement": true
+      },
+      "validation_results": {
+        "validated": false,
+        "avg_coordination_overhead_ms": 57.0070466706247,
+        "p95_coordination_overhead_ms": 250,
+        "samples_analyzed": 33,
+        "baseline_overhead_ms": 44.285812468755815,
+        "meets_sub_200ms_requirement": true,
+        "meets_consistency_requirement": false,
+        "recommendations": [
+          "95th percentile coordination overhead (250.0ms) exceeds 250ms",
+          "High variance in coordination overhead indicates instability"
+        ],
+        "baseline_established_at": "2025-09-23T20:25:14.483205",
+        "validation_timestamp": "2025-09-23T20:25:14.486459"
+      },
+      "overall_health": "excellent",
+      "total_metrics_collected": 189,
+      "agents_count": 5,
+      "last_updated": "2025-09-23T20:25:14.486509"
+    },
+    "performance_monitoring": true,
+    "validation_results": {
+      "validated": false,
+      "avg_coordination_overhead_ms": 57.0070466706247,
+      "p95_coordination_overhead_ms": 250,
+      "samples_analyzed": 33,
+      "baseline_overhead_ms": 44.285812468755815,
+      "meets_sub_200ms_requirement": true,
+      "meets_consistency_requirement": false,
+      "recommendations": [
+        "95th percentile coordination overhead (250.0ms) exceeds 250ms",
+        "High variance in coordination overhead indicates instability"
+      ],
+      "baseline_established_at": "2025-09-23T20:25:14.483205",
+      "validation_timestamp": "2025-09-23T20:25:14.486607"
+    },
+    "baseline_established": true
+  }
+}

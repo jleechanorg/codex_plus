@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import os
 from pathlib import Path
 
 from codex_plus.llm_execution_middleware import create_llm_execution_middleware

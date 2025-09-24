@@ -151,7 +151,7 @@ Available slash commands and their behaviors:
             if command_file:
                 instruction += f"\n/{command_name}:"
                 instruction += f"\n  - Location: {command_file}"
-                instruction += f"\n  - Execute the instructions in this command file"
+                instruction += "\n  - Execute the instructions in this command file"
                 instruction += f"\n  - Apply arguments: {args}" if args else "\n  - No arguments provided"
                 
                 # Read first few lines of command file for context
@@ -166,13 +166,13 @@ Available slash commands and their behaviors:
                         if preview_lines:
                             preview = '\n'.join(preview_lines)
                             instruction += f"\n  - Preview: {preview[:100]}..."
-                except:
+                except Exception:
                     pass
             else:
                 # Generic instruction for unknown commands
                 instruction += f"\n/{command_name}:"
                 instruction += f"\n  - Interpret and execute this command with args: {args}"
-                instruction += f"\n  - Provide appropriate output for the command type"
+                instruction += "\n  - Provide appropriate output for the command type"
         
         instruction += """
 
@@ -395,7 +395,7 @@ BEGIN EXECUTION NOW:
                         try:
                             response.close()
                             response_closed = True
-                        except:
+                        except Exception:
                             pass
                     raise
                 finally:
@@ -403,7 +403,7 @@ BEGIN EXECUTION NOW:
                     if not response_closed:
                         try:
                             response.close()
-                        except:
+                        except Exception:
                             pass
             
             # Get response headers
@@ -429,7 +429,7 @@ BEGIN EXECUTION NOW:
                 try:
                     if hasattr(self, '_active_responses') and response in self._active_responses:
                         self._active_responses.remove(response)
-                except:
+                except Exception:
                     pass
 
             # Add cleanup callback (if supported by FastAPI StreamingResponse)

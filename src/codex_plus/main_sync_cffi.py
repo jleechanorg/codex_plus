@@ -32,16 +32,97 @@ Breaking these rules WILL break the proxy and block all Codex requests.
 from fastapi import FastAPI, Request, HTTPException
 from contextlib import asynccontextmanager
 from fastapi.responses import StreamingResponse, JSONResponse
-from curl_cffi import requests
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
 import logging
 import json as _json
 import json
-import sys
-import os
-import time
-import re
 from urllib.parse import urlparse
 from .status_line_middleware import HookMiddleware
+
+# Pydantic models for API request/response validation
+class AgentConfigCreate(BaseModel):
+    """Model for creating new agent configurations."""
+    name: str = Field(..., description="Agent name")
+    description: str = Field(..., description="Agent description")
+    tools: List[str] = Field(default_factory=list, description="List of available tools")
+    model: str = Field(default="claude-3-5-sonnet-20241022", description="LLM model to use")
+    temperature: float = Field(default=0.7, ge=0, le=2, description="Model temperature")
+    max_tokens: int = Field(default=4096, gt=0, description="Maximum tokens")
+    system_prompt: Optional[str] = Field(None, description="Custom system prompt")
+    instructions: Optional[str] = Field(None, description="Agent instructions")
+    allowed_paths: List[str] = Field(default_factory=list, description="Allowed file paths")
+    forbidden_paths: List[str] = Field(default_factory=list, description="Forbidden file paths")
+    capabilities: List[str] = Field(default_factory=list, description="Agent capabilities")
+    version: str = Field(default="1.0.0", description="Configuration version")
+    author: Optional[str] = Field(None, description="Agent author")
+    tags: List[str] = Field(default_factory=list, description="Agent tags")
+
+class AgentConfigUpdate(BaseModel):
+    """Model for updating existing agent configurations."""
+    name: Optional[str] = Field(None, description="Agent name")
+    description: Optional[str] = Field(None, description="Agent description")
+    tools: Optional[List[str]] = Field(None, description="List of available tools")
+    model: Optional[str] = Field(None, description="LLM model to use")
+    temperature: Optional[float] = Field(None, ge=0, le=2, description="Model temperature")
+    max_tokens: Optional[int] = Field(None, gt=0, description="Maximum tokens")
+    system_prompt: Optional[str] = Field(None, description="Custom system prompt")
+    instructions: Optional[str] = Field(None, description="Agent instructions")
+    allowed_paths: Optional[List[str]] = Field(None, description="Allowed file paths")
+    forbidden_paths: Optional[List[str]] = Field(None, description="Forbidden file paths")
+    capabilities: Optional[List[str]] = Field(None, description="Agent capabilities")
+    version: Optional[str] = Field(None, description="Configuration version")
+    author: Optional[str] = Field(None, description="Agent author")
+    tags: Optional[List[str]] = Field(None, description="Agent tags")
+
+class AgentConfigResponse(BaseModel):
+    """Model for agent configuration responses."""
+    id: str = Field(..., description="Agent ID")
+    name: str = Field(..., description="Agent name")
+    description: str = Field(..., description="Agent description")
+    tools: List[str] = Field(..., description="List of available tools")
+    model: str = Field(..., description="LLM model to use")
+    temperature: float = Field(..., description="Model temperature")
+    max_tokens: int = Field(..., description="Maximum tokens")
+    system_prompt: Optional[str] = Field(None, description="Custom system prompt")
+    instructions: Optional[str] = Field(None, description="Agent instructions")
+    allowed_paths: List[str] = Field(..., description="Allowed file paths")
+    forbidden_paths: List[str] = Field(..., description="Forbidden file paths")
+    capabilities: List[str] = Field(..., description="Agent capabilities")
+    version: str = Field(..., description="Configuration version")
+    author: Optional[str] = Field(None, description="Agent author")
+    tags: List[str] = Field(..., description="Agent tags")
+
+class AgentInvokeRequest(BaseModel):
+    """Model for agent invocation requests."""
+    task: str = Field(..., description="Task description for the agent")
+    working_directory: Optional[str] = Field(None, description="Working directory for execution")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context data")
+
+class AgentInvokeResponse(BaseModel):
+    """Model for agent invocation responses."""
+    agent_id: str = Field(..., description="Agent ID")
+    task: str = Field(..., description="Task description")
+    success: bool = Field(..., description="Execution success status")
+    output: str = Field(..., description="Agent output")
+    error: Optional[str] = Field(None, description="Error message if failed")
+    duration: float = Field(..., description="Execution duration in seconds")
+    timestamp: float = Field(..., description="Execution timestamp")
+
+class MultiAgentInvokeRequest(BaseModel):
+    """Model for multiple agent invocation requests."""
+    agents: List[str] = Field(..., description="List of agent IDs to invoke")
+    task: str = Field(..., description="Task description for all agents")
+    working_directory: Optional[str] = Field(None, description="Working directory for execution")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context data")
+
+class MultiAgentInvokeResponse(BaseModel):
+    """Model for multiple agent invocation responses."""
+    results: List[AgentInvokeResponse] = Field(..., description="Individual agent results")
+    summary: str = Field(..., description="Summary of all agent executions")
+    total_duration: float = Field(..., description="Total execution duration")
+    successful_agents: int = Field(..., description="Number of successful agents")
+    total_agents: int = Field(..., description="Total number of agents")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -133,12 +214,18 @@ def _validate_upstream_url(url: str) -> bool:
 
 # Initialize slash command middleware
 logger.info("Initializing LLM execution middleware (instruction mode)")
-from .llm_execution_middleware import create_llm_execution_middleware
+from .llm_execution_middleware import create_llm_execution_middleware  # noqa: E402
 # ⚠️ DO NOT MODIFY: This creates the core proxy forwarding with curl_cffi
 slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
 
+# Initialize agent orchestrator middleware
+logger.info("Initializing agent orchestrator middleware")
+from .agent_orchestrator_middleware import create_agent_orchestrator_middleware  # noqa: E402
+agent_middleware = create_agent_orchestrator_middleware(max_concurrent_agents=3, agent_timeout=30)
+logger.info(f"🤖 Agent orchestrator loaded: {len(agent_middleware.agents)} agents available")
+
 # ✅ SAFE TO MODIFY: Hook system imports and processing
-from .hooks import (
+from .hooks import (  # noqa: E402
     process_pre_input_hooks,
     process_post_output_hooks,
     settings_stop,
@@ -153,6 +240,398 @@ async def health():
     """Simple health check - not forwarded"""
     logger.info("HEALTH OK")
     return JSONResponse({"status": "healthy"})
+
+@app.get("/agents/status")
+async def agents_status():
+    """Agent orchestrator status - not forwarded"""
+    logger.info("AGENT STATUS REQUEST")
+    return JSONResponse(agent_middleware.get_agent_status())
+
+# RESTful API endpoints for agent management
+@app.get("/agents", response_model=List[AgentConfigResponse])
+async def list_agents():
+    """List all available agents"""
+    logger.info("LIST AGENTS REQUEST")
+    try:
+        agents_list = agent_middleware.config_loader.list_agents()
+        response_data = []
+
+        for agent_data in agents_list:
+            agent_id = agent_data['id']
+            config = agent_middleware.config_loader.get_agent(agent_id)
+            if config:
+                response_data.append(AgentConfigResponse(
+                    id=agent_id,
+                    name=config.name,
+                    description=config.description,
+                    tools=config.tools,
+                    model=config.model,
+                    temperature=config.temperature,
+                    max_tokens=config.max_tokens,
+                    system_prompt=config.system_prompt,
+                    instructions=config.instructions,
+                    allowed_paths=config.allowed_paths,
+                    forbidden_paths=config.forbidden_paths,
+                    capabilities=list(config.capabilities),
+                    version=config.version,
+                    author=config.author,
+                    tags=config.tags
+                ))
+
+        logger.info(f"Listed {len(response_data)} agents")
+        return response_data
+
+    except Exception as e:
+        logger.error(f"Failed to list agents: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list agents: {str(e)}")
+
+@app.get("/agents/{agent_id}", response_model=AgentConfigResponse)
+async def get_agent(agent_id: str):
+    """Get specific agent configuration"""
+    logger.info(f"GET AGENT REQUEST: {agent_id}")
+    try:
+        config = agent_middleware.config_loader.get_agent(agent_id)
+        if not config:
+            logger.warning(f"Agent not found: {agent_id}")
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+        response_data = AgentConfigResponse(
+            id=agent_id,
+            name=config.name,
+            description=config.description,
+            tools=config.tools,
+            model=config.model,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            system_prompt=config.system_prompt,
+            instructions=config.instructions,
+            allowed_paths=config.allowed_paths,
+            forbidden_paths=config.forbidden_paths,
+            capabilities=list(config.capabilities),
+            version=config.version,
+            author=config.author,
+            tags=config.tags
+        )
+
+        logger.info(f"Retrieved agent configuration: {agent_id}")
+        return response_data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get agent {agent_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get agent: {str(e)}")
+
+@app.post("/agents", response_model=AgentConfigResponse, status_code=201)
+async def create_agent(agent_data: AgentConfigCreate):
+    """Create new agent configuration"""
+    logger.info(f"CREATE AGENT REQUEST: {agent_data.name}")
+    try:
+        from .subagents.config_loader import AgentConfiguration
+
+        # Create agent configuration
+        config = AgentConfiguration(
+            name=agent_data.name,
+            description=agent_data.description,
+            tools=agent_data.tools,
+            model=agent_data.model,
+            temperature=agent_data.temperature,
+            max_tokens=agent_data.max_tokens,
+            system_prompt=agent_data.system_prompt,
+            instructions=agent_data.instructions,
+            allowed_paths=agent_data.allowed_paths,
+            forbidden_paths=agent_data.forbidden_paths,
+            capabilities=set(agent_data.capabilities),
+            version=agent_data.version,
+            author=agent_data.author,
+            tags=agent_data.tags
+        )
+
+        # Validate configuration
+        validation_issues = config.validate()
+        if validation_issues:
+            logger.warning(f"Validation issues for new agent: {validation_issues}")
+            raise HTTPException(status_code=400, detail=f"Validation errors: {', '.join(validation_issues)}")
+
+        # Generate agent ID from name
+        agent_id = agent_data.name.lower().replace(" ", "-").replace("_", "-")
+
+        # Check if agent already exists
+        if agent_middleware.config_loader.get_agent(agent_id):
+            logger.warning(f"Agent already exists: {agent_id}")
+            raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists")
+
+        # Save agent configuration
+        agent_middleware.config_loader.save_agent(agent_id, config)
+
+        # Reload agents to include new one
+        agent_middleware._load_agents()
+
+        response_data = AgentConfigResponse(
+            id=agent_id,
+            name=config.name,
+            description=config.description,
+            tools=config.tools,
+            model=config.model,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            system_prompt=config.system_prompt,
+            instructions=config.instructions,
+            allowed_paths=config.allowed_paths,
+            forbidden_paths=config.forbidden_paths,
+            capabilities=list(config.capabilities),
+            version=config.version,
+            author=config.author,
+            tags=config.tags
+        )
+
+        logger.info(f"Created agent: {agent_id}")
+        return response_data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create agent: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create agent: {str(e)}")
+
+@app.put("/agents/{agent_id}", response_model=AgentConfigResponse)
+async def update_agent(agent_id: str, agent_data: AgentConfigUpdate):
+    """Update existing agent configuration"""
+    logger.info(f"UPDATE AGENT REQUEST: {agent_id}")
+    try:
+        # Get existing configuration
+        existing_config = agent_middleware.config_loader.get_agent(agent_id)
+        if not existing_config:
+            logger.warning(f"Agent not found for update: {agent_id}")
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+        from .subagents.config_loader import AgentConfiguration
+
+        # Update only provided fields
+        updated_config = AgentConfiguration(
+            name=agent_data.name if agent_data.name is not None else existing_config.name,
+            description=agent_data.description if agent_data.description is not None else existing_config.description,
+            tools=agent_data.tools if agent_data.tools is not None else existing_config.tools,
+            model=agent_data.model if agent_data.model is not None else existing_config.model,
+            temperature=agent_data.temperature if agent_data.temperature is not None else existing_config.temperature,
+            max_tokens=agent_data.max_tokens if agent_data.max_tokens is not None else existing_config.max_tokens,
+            system_prompt=agent_data.system_prompt if agent_data.system_prompt is not None else existing_config.system_prompt,
+            instructions=agent_data.instructions if agent_data.instructions is not None else existing_config.instructions,
+            allowed_paths=agent_data.allowed_paths if agent_data.allowed_paths is not None else existing_config.allowed_paths,
+            forbidden_paths=agent_data.forbidden_paths if agent_data.forbidden_paths is not None else existing_config.forbidden_paths,
+            capabilities=set(agent_data.capabilities) if agent_data.capabilities is not None else existing_config.capabilities,
+            version=agent_data.version if agent_data.version is not None else existing_config.version,
+            author=agent_data.author if agent_data.author is not None else existing_config.author,
+            tags=agent_data.tags if agent_data.tags is not None else existing_config.tags
+        )
+
+        # Validate updated configuration
+        validation_issues = updated_config.validate()
+        if validation_issues:
+            logger.warning(f"Validation issues for updated agent: {validation_issues}")
+            raise HTTPException(status_code=400, detail=f"Validation errors: {', '.join(validation_issues)}")
+
+        # Save updated configuration
+        agent_middleware.config_loader.save_agent(agent_id, updated_config)
+
+        # Reload agents to include updated one
+        agent_middleware._load_agents()
+
+        response_data = AgentConfigResponse(
+            id=agent_id,
+            name=updated_config.name,
+            description=updated_config.description,
+            tools=updated_config.tools,
+            model=updated_config.model,
+            temperature=updated_config.temperature,
+            max_tokens=updated_config.max_tokens,
+            system_prompt=updated_config.system_prompt,
+            instructions=updated_config.instructions,
+            allowed_paths=updated_config.allowed_paths,
+            forbidden_paths=updated_config.forbidden_paths,
+            capabilities=list(updated_config.capabilities),
+            version=updated_config.version,
+            author=updated_config.author,
+            tags=updated_config.tags
+        )
+
+        logger.info(f"Updated agent: {agent_id}")
+        return response_data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update agent {agent_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update agent: {str(e)}")
+
+@app.delete("/agents/{agent_id}", status_code=204)
+async def delete_agent(agent_id: str):
+    """Delete agent configuration"""
+    logger.info(f"DELETE AGENT REQUEST: {agent_id}")
+    try:
+        # Check if agent exists
+        config = agent_middleware.config_loader.get_agent(agent_id)
+        if not config:
+            logger.warning(f"Agent not found for deletion: {agent_id}")
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+        # Delete agent file
+        import os
+
+        agents_dir = agent_middleware.config_loader.agents_dir
+        yaml_file = agents_dir / f"{agent_id}.yaml"
+        json_file = agents_dir / f"{agent_id}.json"
+
+        deleted = False
+        if yaml_file.exists():
+            os.remove(yaml_file)
+            deleted = True
+            logger.info(f"Deleted YAML file: {yaml_file}")
+
+        if json_file.exists():
+            os.remove(json_file)
+            deleted = True
+            logger.info(f"Deleted JSON file: {json_file}")
+
+        if not deleted:
+            logger.warning(f"No configuration files found for agent: {agent_id}")
+            raise HTTPException(status_code=404, detail=f"No configuration files found for agent '{agent_id}'")
+
+        # Reload agents to remove deleted one
+        agent_middleware._load_agents()
+
+        logger.info(f"Deleted agent: {agent_id}")
+        return None
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete agent {agent_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete agent: {str(e)}")
+
+@app.post("/agents/{agent_id}/invoke", response_model=AgentInvokeResponse)
+async def invoke_agent(agent_id: str, request_data: AgentInvokeRequest):
+    """Invoke specific agent with task"""
+    logger.info(f"INVOKE AGENT REQUEST: {agent_id}")
+    try:
+        # Check if agent exists
+        config = agent_middleware.config_loader.get_agent(agent_id)
+        if not config:
+            logger.warning(f"Agent not found for invocation: {agent_id}")
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+        # Create execution context
+        from .agent_orchestrator_middleware import AgentExecutionContext
+
+        # Create a minimal request object for the execution context
+        class MinimalRequest:
+            def __init__(self):
+                self.state = type('state', (), {})()
+
+        minimal_request = MinimalRequest()
+        context = AgentExecutionContext(minimal_request, request_data.working_directory)
+
+        # Add shared context if provided
+        if request_data.context:
+            context.shared_state.update(request_data.context)
+
+        # Execute agent
+        result = await agent_middleware.execute_agent(agent_id, request_data.task, context)
+
+        response_data = AgentInvokeResponse(
+            agent_id=result.agent_id,
+            task=result.task,
+            success=result.success,
+            output=result.output,
+            error=result.error,
+            duration=result.duration,
+            timestamp=result.timestamp
+        )
+
+        logger.info(f"Agent invocation completed: {agent_id}, success: {result.success}")
+        return response_data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to invoke agent {agent_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to invoke agent: {str(e)}")
+
+@app.post("/agents/invoke-multiple", response_model=MultiAgentInvokeResponse)
+async def invoke_multiple_agents(request_data: MultiAgentInvokeRequest):
+    """Invoke multiple agents in parallel"""
+    logger.info(f"INVOKE MULTIPLE AGENTS REQUEST: {len(request_data.agents)} agents")
+    try:
+        # Validate all agents exist
+        missing_agents = []
+        for agent_id in request_data.agents:
+            if not agent_middleware.config_loader.get_agent(agent_id):
+                missing_agents.append(agent_id)
+
+        if missing_agents:
+            logger.warning(f"Agents not found: {missing_agents}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agents not found: {', '.join(missing_agents)}"
+            )
+
+        # Create execution context
+        from .agent_orchestrator_middleware import AgentExecutionContext
+
+        # Create a minimal request object for the execution context
+        class MinimalRequest:
+            def __init__(self):
+                self.state = type('state', (), {})()
+
+        minimal_request = MinimalRequest()
+        context = AgentExecutionContext(minimal_request, request_data.working_directory)
+
+        # Add shared context if provided
+        if request_data.context:
+            context.shared_state.update(request_data.context)
+
+        # Create agent tasks
+        agent_tasks = [(agent_id, request_data.task) for agent_id in request_data.agents]
+
+        # Execute agents in parallel
+        results = await agent_middleware.execute_agents_parallel(agent_tasks, context)
+
+        # Convert results to response format
+        agent_responses = []
+        for result in results:
+            agent_responses.append(AgentInvokeResponse(
+                agent_id=result.agent_id,
+                task=result.task,
+                success=result.success,
+                output=result.output,
+                error=result.error,
+                duration=result.duration,
+                timestamp=result.timestamp
+            ))
+
+        # Calculate summary metrics
+        successful_agents = sum(1 for result in results if result.success)
+        total_duration = sum(result.duration for result in results)
+
+        # Format summary
+        summary = agent_middleware.format_agent_results(results, context)
+
+        response_data = MultiAgentInvokeResponse(
+            results=agent_responses,
+            summary=summary,
+            total_duration=total_duration,
+            successful_agents=successful_agents,
+            total_agents=len(results)
+        )
+
+        logger.info(f"Multiple agent invocation completed: {successful_agents}/{len(results)} successful")
+        return response_data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to invoke multiple agents: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to invoke multiple agents: {str(e)}")
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(request: Request, path: str):
@@ -169,6 +648,18 @@ async def proxy(request: Request, path: str):
 
     Proxy with integrated slash command middleware support
     """
+    # Skip forwarding for local endpoints
+    local_endpoints = [
+        "health",
+        "agents/status",
+        "agents"
+    ]
+
+    # Check for agent management endpoints
+    if path in local_endpoints or path.startswith("agents/"):
+        logger.warning(f"Path {path} should be handled by dedicated endpoint, not proxy")
+        return JSONResponse({"error": "Endpoint not found"}, status_code=404)
+
     # Log incoming request
     logger.info(f"Processing {request.method} /{path}")
 
@@ -240,6 +731,20 @@ async def proxy(request: Request, path: str):
             logger.info("✅ Status line stored for middleware injection")
     except Exception as e:
         logger.error(f"Status line storage failed: {e}")
+
+    # ✅ SAFE TO MODIFY: Agent orchestrator middleware processing
+    # Process agent invocation patterns (/agent, /agents run, /delegate)
+    try:
+        logger.info(f"🤖 Processing agent commands for {path}")
+        modified_request_data = await agent_middleware.process_request(request, path)
+        if modified_request_data:
+            # Agent commands were processed, update request body
+            modified_body = json.dumps(modified_request_data).encode('utf-8')
+            request.state.modified_body = modified_body
+            logger.info("🤖 Agent commands processed, request body modified")
+    except Exception as e:
+        logger.error(f"❌ Agent middleware failed for {path}: {e}")
+        # Continue processing - agent middleware failure shouldn't block the request
 
     # 🔒 PROTECTED: Core middleware call - DO NOT MODIFY 🔒
     # ❌ CRITICAL: This handles curl_cffi forwarding to ChatGPT backend

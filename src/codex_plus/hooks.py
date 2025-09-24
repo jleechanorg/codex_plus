@@ -2,7 +2,6 @@ import asyncio
 import importlib.util
 import logging
 import os
-import sys
 import traceback
 from typing import Any, Dict, List, Optional, Union, Tuple
 from pathlib import Path
@@ -413,7 +412,6 @@ class HookSystem:
 
     def _parse_docstring_metadata(self, content: str) -> Optional[Dict[str, Any]]:
         """Parse metadata from Python docstring in new format"""
-        import re
         lines = content.splitlines()
 
         if len(lines) < 5:
@@ -560,7 +558,10 @@ class HookSystem:
         Follows Claude Code format: a settings hook's command may reference a script in
         .codexplus/hooks or .claude/hooks by basename. We resolve and pick interpreter.
         """
-        import asyncio, json, shlex, os as _os
+        import asyncio
+        import json
+        import shlex
+        import os as _os
         try:
             # Best-effort project dir discovery for CLAUDE_PROJECT_DIR
             # Use working directory from payload if available (for CLI requests)

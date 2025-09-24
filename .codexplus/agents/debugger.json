@@ -1,0 +1,15 @@
+{
+  "id": "debugger",
+  "name": "Debugging Agent",
+  "description": "Analyzes errors, traces issues, and suggests fixes",
+  "capabilities": [
+    "debugging",
+    "code_analysis",
+    "read_files",
+    "execute_commands"
+  ],
+  "config": {
+    "trace_depth": 10,
+    "analyze_logs": true
+  }
+}

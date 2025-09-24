@@ -1,0 +1,21 @@
+{
+  "performance_validation": {
+    "validated": true,
+    "avg_coordination_overhead_ms": 0.43190717697143555,
+    "p95_coordination_overhead_ms": 0.5848407745361328,
+    "samples_analyzed": 40,
+    "baseline_overhead_ms": 0.43190717697143555,
+    "meets_sub_200ms_requirement": true,
+    "meets_consistency_requirement": true,
+    "recommendations": [],
+    "baseline_established_at": "2025-09-23T20:31:06.447047",
+    "validation_timestamp": "2025-09-23T20:31:06.450320"
+  },
+  "coordination_overhead_ms": 0.43190717697143555,
+  "p95_coordination_overhead_ms": 0.5848407745361328,
+  "overall_health": "excellent",
+  "baseline_established": true,
+  "total_metrics_collected": 60,
+  "export_timestamp": "2025-09-23T20:31:06.450397",
+  "meets_requirements": true
+}

@@ -1,0 +1,352 @@
+{
+  "total_agents": 16,
+  "valid_agents": 16,
+  "invalid_agents": 0,
+  "warnings": [],
+  "errors": [],
+  "agent_details": [
+    {
+      "file": "cerebras-consultant.md",
+      "type": ".md",
+      "valid": true,
+      "config": {
+        "name": "cerebras-consultant",
+        "description": "Use this agent when the user explicitly requests Cerebras-assisted code generation, rapid scaffolding,\nor wants to leverage the `/cerebras` slash command for large or complex implementation tasks.\nThe agent orchestrates Cerebras Model Studio via the official slash-command workflow for\nultra-fast code production, architectural drafting, and automated documentation.\n",
+        "body_length": 7004
+      },
+      "issues": []
+    },
+    {
+      "file": "code-review.md",
+      "type": ".md",
+      "valid": true,
+      "config": {
+        "name": "code-review",
+        "description": "Specialized AI agent for comprehensive code analysis, security review, and quality assessment. Expert in multi-language code review with focus on bugs, security vulnerabilities, performance issues, and best practices.",
+        "body_length": 6006
+      },
+      "issues": []
+    },
+    {
+      "file": "code-reviewer.yaml",
+      "type": ".yaml",
+      "valid": true,
+      "config": {
+        "capabilities": [
+          "security_review",
+          "code_analysis"
+        ],
+        "description": "Specialized agent for code review and security analysis",
+        "max_tokens": 4096,
+        "model": "claude-3-5-sonnet-20241022",
+        "name": "Code Reviewer",
+        "tags": [
+          "review",
+          "security",
+          "quality"
+        ],
+        "temperature": 0.3,
+        "tools": [
+          "Read",
+          "Grep",
+          "WebSearch"
+        ],
+        "system_prompt": "You are a specialized code review agent.\nFocus on:\n- Security vulnerabilities\n- Performance issues\n- Code quality and best practices\n- Potential bugs\nProvide actionable feedback with specific line references.\n"
+      },
+      "issues": []
+    },
+    {
+      "file": "codex-consultant.md",
+      "type": ".md",
+      "valid": true,
+      "config": {
+        "name": "codex-consultant",
+        "description": "Use this agent when the user asks to consult with Codex for code analysis, explanation, or insights. This agent is particularly useful when you need deep code understanding, architectural analysis, or when the user explicitly mentions wanting to 'consult with codex' or 'ask codex about' specific files or code patterns.\n",
+        "body_length": 9246
+      },
+      "issues": [
+        "No clear responsibilities section found"
+      ]
+    },
+    {
+      "file": "copilot-fixpr.md",
+      "type": ".md",
+      "valid": true,
+      "config": {
+        "name": "copilot-fixpr",
+        "description": "Specialized PR issue resolution agent focusing exclusively on implementing code fixes for GitHub PR blockers. Expert in file justification protocol, security fixes, runtime errors, test failures, and merge conflicts with actual code implementation.",
+        "tools": [
+          "*"
+        ],
+        "body_length": 15675
+      },
+      "issues": []
+    },
+    {
+      "file": "debugger.yaml",
+      "type": ".yaml",
+      "valid": true,
+      "config": {
+        "capabilities": [
+          "debugging",
+          "error_analysis"
+        ],
+        "description": "Analyzes errors and traces issues",
+        "max_tokens": 4096,
+        "model": "claude-3-5-sonnet-20241022",
+        "name": "Debugger",
+        "tags": [
+          "debug",
+          "troubleshooting",
+          "errors"
+        ],
+        "temperature": 0.3,
+        "tools": [
+          "Read",
+          "Grep",
+          "Bash",
+          "BashOutput"
+        ],
+        "system_prompt": "You are a debugging specialist.\nYour approach:\n- Systematic error analysis\n- Stack trace interpretation\n- Root cause identification\n- Fix recommendations\nProvide step-by-step debugging instructions.\n"
+      },
+      "issues": []
+    },
+    {
+      "file": "documentation-writer.yaml",
+      "type": ".yaml",
+      "valid": true,
+      "config": {
+        "capabilities": [
+          "documentation",
+          "technical_writing"
+        ],
+        "description": "Creates and maintains project documentation",
+        "max_tokens": 4096,
+        "model": "claude-3-5-sonnet-20241022",
+        "name": "Documentation Writer",
+        "tags": [
+          "docs",
+          "writing",
+          "api"
+        ],
+        "temperature": 0.7,
+        "tools": [
+          "Read",
+          "Write",
+          "Edit",
+          "WebSearch"
+        ],
+        "system_prompt": "You are a technical documentation specialist.\nFocus on:\n- Clear, concise explanations\n- Code examples\n- API documentation\n- User guides\nFollow the project's documentation standards.\n"
+      },
+      "issues": []
+    },
+    {
+      "file": "gemini-consultant.md",
+      "type": ".md",
+      "valid": true,
+      "config": {
+        "name": "gemini-consultant",
+        "description": "Use this agent when the user explicitly asks to consult Gemini, seek external AI guidance, or needs a second opinion on technical decisions.\n",
+        "body_length": 8357
+      },
+      "issues": [
+        "No clear responsibilities section found"
+      ]
+    },
+    {
+      "file": "grok-consultant.md",
+      "type": ".md",
+      "valid": true,
+      "config": {
+        "name": "grok-consultant",
+        "description": "Use this agent when you need a Fresh Data Analysis Specialist who can tap into real-time context, surface emerging trends, and translate the latest signals into actionable guidance. The agent mirrors Grok's fast-moving perspective by grounding every consultation in the freshest available data.\n",
+        "body_length": 7797
+      },
+      "issues": [
+        "No clear responsibilities section found"
+      ]
+    },
+    {
+      "file": "long-runner.md",
+      "type": ".md",
+      "valid": true,
+      "config": {
+        "name": "long-runner",
+        "description": "Generic agent for medium and long-running tasks (>5 minutes). Executes independently, writes detailed results to files, and provides concise summaries to minimize context usage.",
+        "body_length": 16151
+      },
+      "issues": [
+        "No clear responsibilities section found"
+      ]
+    },
+    {
+      "file": "performance-optimizer.yaml",
+      "type": ".yaml",
+      "valid": true,
+      "config": {
+        "capabilities": [
+          "performance_analysis",
+          "optimization",
+          "profiling"
+        ],
+        "description": "Specialized in performance analysis and optimization recommendations",
+        "max_tokens": 4096,
+        "model": "claude-3-5-sonnet-20241022",
+        "name": "Performance Optimizer",
+        "tags": [
+          "performance",
+          "optimization",
+          "profiling",
+          "benchmarking"
+        ],
+        "temperature": 0.2,
+        "tools": [
+          "Read",
+          "Bash",
+          "BashOutput",
+          "Grep",
+          "WebSearch"
+        ],
+        "system_prompt": "You are a performance optimization specialist focused on identifying and resolving performance bottlenecks.\nYour expertise includes:\n- CPU and memory profiling analysis\n- Database query optimization\n- Caching strategies and implementation\n- Load testing and benchmarking\n- Resource utilization analysis\n- Algorithm complexity assessment\n- Network performance optimization\n- Frontend performance (bundle size, rendering)\n\nApproach:\n- Identify performance bottlenecks through profiling data\n- Provide specific, measurable optimization recommendations\n- Suggest benchmarking strategies to validate improvements\n- Consider scalability implications of proposed changes\n- Balance performance gains with code maintainability\n\nAlways provide concrete performance metrics and measurement strategies."
+      },
+      "issues": []
+    },
+    {
+      "file": "refactoring-agent.yaml",
+      "type": ".yaml",
+      "valid": true,
+      "config": {
+        "capabilities": [
+          "optimization",
+          "refactoring"
+        ],
+        "description": "Improves code structure and design",
+        "max_tokens": 4096,
+        "model": "claude-3-5-sonnet-20241022",
+        "name": "Refactoring Agent",
+        "tags": [
+          "refactor",
+          "clean-code",
+          "optimization"
+        ],
+        "temperature": 0.4,
+        "tools": [
+          "Read",
+          "Edit",
+          "MultiEdit"
+        ],
+        "system_prompt": "You are a code refactoring specialist.\nPrinciples:\n- SOLID principles\n- DRY (Don't Repeat Yourself)\n- Clean code practices\n- Performance optimization\nMaintain functionality while improving structure.\n"
+      },
+      "issues": []
+    },
+    {
+      "file": "security-auditor.md",
+      "type": ".md",
+      "valid": true,
+      "config": {
+        "name": "security-auditor",
+        "description": "Comprehensive security assessment specialist focused on vulnerability analysis, threat modeling, and security compliance across applications and infrastructure.",
+        "body_length": 7218
+      },
+      "issues": []
+    },
+    {
+      "file": "test-runner.yaml",
+      "type": ".yaml",
+      "valid": true,
+      "config": {
+        "capabilities": [
+          "test_execution",
+          "coverage_analysis"
+        ],
+        "description": "Executes tests and analyzes results",
+        "max_tokens": 4096,
+        "model": "claude-3-5-sonnet-20241022",
+        "name": "Test Runner",
+        "tags": [
+          "testing",
+          "validation",
+          "ci"
+        ],
+        "temperature": 0.2,
+        "tools": [
+          "Read",
+          "Bash",
+          "BashOutput"
+        ],
+        "system_prompt": "You are a test execution specialist.\nYour responsibilities:\n- Run test suites\n- Analyze test failures\n- Generate test reports\n- Suggest test improvements\nAlways validate test outputs and provide clear summaries.\n"
+      },
+      "issues": []
+    },
+    {
+      "file": "testexecutor.md",
+      "type": ".md",
+      "valid": true,
+      "config": {
+        "name": "testexecutor",
+        "description": "Methodical test specification execution with evidence collection. Expert in browser automation, real authentication testing, and structured evidence packages.",
+        "tools": [
+          "Read",
+          "Glob",
+          "Grep",
+          "WebFetch",
+          "mcp__playwright-mcp__browser_navigate",
+          "mcp__playwright-mcp__browser_take_screenshot",
+          "mcp__playwright-mcp__browser_click",
+          "mcp__playwright-mcp__browser_type",
+          "mcp__playwright-mcp__browser_evaluate",
+          "mcp__playwright-mcp__browser_wait_for",
+          "mcp__playwright-mcp__browser_snapshot",
+          "mcp__playwright-mcp__browser_close"
+        ],
+        "body_length": 4647
+      },
+      "issues": [
+        "No clear responsibilities section found"
+      ]
+    },
+    {
+      "file": "testvalidator.md",
+      "type": ".md",
+      "valid": true,
+      "config": {
+        "name": "testvalidator",
+        "description": "Independent validation of test execution results against original specifications. Critical auditor for evidence analysis and requirement verification.",
+        "tools": [
+          "Read",
+          "Glob",
+          "Grep",
+          "WebFetch"
+        ],
+        "body_length": 7454
+      },
+      "issues": [
+        "No clear responsibilities section found"
+      ]
+    }
+  ],
+  "summary": {
+    "agent_types": {
+      ".md": 10,
+      ".yaml": 6
+    },
+    "capabilities": {
+      "security_review": 1,
+      "code_analysis": 1,
+      "debugging": 1,
+      "error_analysis": 1,
+      "documentation": 1,
+      "technical_writing": 1,
+      "performance_analysis": 1,
+      "optimization": 2,
+      "profiling": 1,
+      "refactoring": 1,
+      "test_execution": 1,
+      "coverage_analysis": 1
+    },
+    "models": {
+      "claude-3-5-sonnet-20241022": 6
+    },
+    "validation_rate": 100.0
+  }
+}
