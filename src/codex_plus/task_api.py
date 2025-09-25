@@ -287,7 +287,7 @@ def _resolve_command(config: AgentConfig) -> Optional[RunnerCommand]:
     if codex_binary is None:
         return None
 
-    argv = [codex_binary, "exec", "--full-auto"]
+    argv = [codex_binary, "exec", "--yolo"]
     color = metadata.get("runner_color")
     if isinstance(color, str):
         argv.extend(["--color", color])
