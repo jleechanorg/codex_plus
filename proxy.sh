@@ -83,7 +83,7 @@ configure_provider_environment() {
             fi
         done
 
-        if [ ${#missing_vars[@]} -gt 0 ]; then
+        if [ "${#missing_vars[@]}" -gt 0 ]; then
             echo -e "${RED}❌ Missing required Cerebras environment variable(s): ${missing_vars[*]}${NC}" >&2
             echo -e "${YELLOW}💡 Export CEREBRAS_API_KEY, CEREBRAS_BASE_URL, and CEREBRAS_MODEL before starting in Cerebras mode${NC}" >&2
             return 1
@@ -93,12 +93,11 @@ configure_provider_environment() {
         export OPENAI_API_KEY="$CEREBRAS_API_KEY"
         export OPENAI_BASE_URL="$CEREBRAS_BASE_URL"
         export OPENAI_MODEL="$CEREBRAS_MODEL"
-        echo "$PROVIDER_MODE" > "$RUNTIME_DIR/provider.mode"
         echo -e "${BLUE}🌐 Cerebras mode enabled - proxy will use Cerebras credentials${NC}"
     else
         export CODEX_PLUS_PROVIDER_MODE="openai"
-        echo "$PROVIDER_MODE" > "$RUNTIME_DIR/provider.mode"
     fi
+    echo "$PROVIDER_MODE" > "$RUNTIME_DIR/provider.mode"
 }
 
 validate_pid() {
