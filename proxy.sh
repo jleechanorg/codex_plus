@@ -42,12 +42,63 @@ LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
 LAUNCHD_SCRIPT="$SCRIPT_DIR/scripts/proxy_launchd.sh"
 CRONTAB_ENTRY="@reboot cd $SCRIPT_DIR && ./proxy.sh enable"
 
+# Provider configuration
+PROVIDER_MODE="openai"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+# Parse global flags (currently only --cerebras)
+POSITIONAL_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --cerebras)
+            PROVIDER_MODE="cerebras"
+            shift
+            ;;
+        --)
+            shift
+            POSITIONAL_ARGS+=("$@")
+            break
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+set -- "${POSITIONAL_ARGS[@]}"
+
+configure_provider_environment() {
+    if [ "$PROVIDER_MODE" = "cerebras" ]; then
+        local missing_vars=()
+        for var in CEREBRAS_API_KEY CEREBRAS_BASE_URL CEREBRAS_MODEL; do
+            if [ -z "${!var:-}" ]; then
+                missing_vars+=("$var")
+            fi
+        done
+
+        if [ "${#missing_vars[@]}" -gt 0 ]; then
+            echo -e "${RED}❌ Missing required Cerebras environment variable(s): ${missing_vars[*]}${NC}" >&2
+            echo -e "${YELLOW}💡 Export CEREBRAS_API_KEY, CEREBRAS_BASE_URL, and CEREBRAS_MODEL before starting in Cerebras mode${NC}" >&2
+            return 1
+        fi
+
+        export CODEX_PLUS_PROVIDER_MODE="cerebras"
+        export OPENAI_API_KEY="$CEREBRAS_API_KEY"
+        export OPENAI_BASE_URL="$CEREBRAS_BASE_URL"
+        export OPENAI_MODEL="$CEREBRAS_MODEL"
+        echo -e "${BLUE}🌐 Cerebras mode enabled - proxy will use Cerebras credentials${NC}"
+    else
+        export CODEX_PLUS_PROVIDER_MODE="openai"
+    fi
+    echo "$PROVIDER_MODE" > "$RUNTIME_DIR/provider.mode"
+}
 
 validate_pid() {
     local pid="$1"
@@ -95,6 +146,14 @@ print_status() {
             echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
             echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
             echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
+            if [ -f "$RUNTIME_DIR/provider.mode" ]; then
+                local provider
+                provider=$(cat "$RUNTIME_DIR/provider.mode" 2>/dev/null)
+                if [ -n "$provider" ]; then
+                    local provider_display="${provider^^}"
+                    echo -e "  ${GREEN}🌐 Mode:${NC} $provider_display"
+                fi
+            fi
             echo -e "  ${GREEN}📊 Usage:${NC} OPENAI_BASE_URL=http://localhost:10000 codex"
             return 0
         else
@@ -209,6 +268,11 @@ start_proxy() {
     fi
 
     # Port 10000 should now be available after cleanup above
+
+    # Validate provider configuration before launching
+    if ! configure_provider_environment; then
+        return 1
+    fi
 
     # Start proxy in background with enhanced error handling
     source "$VENV_PATH/bin/activate" || {
@@ -520,7 +584,10 @@ handle_autostart() {
 show_help() {
     echo -e "${BLUE}Codex-Plus Simple Proxy Control Script${NC}"
     echo ""
-    echo "Usage: $0 [command]"
+    echo "Usage: $0 [--cerebras] [command]"
+    echo ""
+    echo "Options:"
+    echo -e "  ${GREEN}--cerebras${NC}  Use Cerebras credentials (requires CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL)"
     echo ""
     echo "Commands:"
     echo -e "  ${GREEN}enable${NC}   Start the proxy server"
@@ -534,6 +601,7 @@ show_help() {
     echo "Examples:"
     echo "  $0 enable                                    # Start proxy"
     echo "  $0 status                                    # Check status"
+    echo "  $0 --cerebras enable                          # Start proxy using Cerebras environment"
     echo "  OPENAI_BASE_URL=http://localhost:10000 codex  # Use with codex"
     echo "  $0 disable                                   # Stop proxy"
 }
