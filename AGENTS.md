@@ -17,3 +17,5 @@ Adopt conventional-style prefixes: `fix(middleware): ...`, `refactor(hooks): ...
 
 ## Security & Configuration Tips
 Never log authentication tokens or session cookies. Maintain the streaming proxy path without inserting external scripts or blocking 401 passthrough behavior. Respect `proxy.sh` defaults (port 10000) and ensure authenticated Codex CLI requests succeed while unauthenticated ones return 401. Update `CLAUDE.md` and this guide if lifecycle or invariants change.
+
+**Codex runner reminder:** the Task API now launches agents with `codex exec --yolo` by default. Keep your `.claude/agents/*.md` instructions compatible with that flag (no extra sandbox approvals required) and only override the runner when a custom command is absolutely necessary.
