@@ -150,7 +150,8 @@ print_status() {
                 local provider
                 provider=$(cat "$RUNTIME_DIR/provider.mode" 2>/dev/null)
                 if [ -n "$provider" ]; then
-                    local provider_display="${provider^^}"
+                    local provider_display
+                    provider_display=$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')
                     echo -e "  ${GREEN}🌐 Mode:${NC} $provider_display"
                 fi
             fi
