@@ -2,7 +2,7 @@
 
 > ⚠️ **Prototype ahead:** Codex-Plus is an actively evolving experiment. Expect rough edges and be prepared to tweak scripts, paths, and shell configuration for your local environment.
 
-Codex-Plus is a FastAPI-based HTTP proxy that augments the Codex CLI with slash commands, Anthropic-aligned hooks, MCP tooling, and live status line feedback—without altering the CLI UX. The proxy forwards authenticated Codex traffic to the ChatGPT backend using `curl_cffi` Chrome impersonation so that all original capabilities remain available.
+Codex-Plus is a FastAPI-based HTTP proxy that augments the Codex CLI with live status line telemetry, slash command orchestration, and Anthropic-aligned hooks—without altering the CLI UX. These three layers are the primary value-add: real-time status context, declarative slash automation, and lifecycle hooks that drive custom workflows. The proxy forwards authenticated Codex traffic to the ChatGPT backend using `curl_cffi` Chrome impersonation so that all original capabilities remain available.
 
 ## Quick Start
 
@@ -18,7 +18,7 @@ pip install -r requirements.txt
 ./install.sh
 
 # Launch the proxy
-./proxy.sh enable
+./proxy.sh
 
 # Use Codex (routes through proxy when the managed process is alive)
 codex "hello"
