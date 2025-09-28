@@ -1,7 +1,7 @@
 # /reviewdeep Command
 
 **Purpose**
-Deliver a high-signal, security-aware code review entirely inside the CLI harness—no MCP agents or external automation required. Mirrors the manual process we just ran.
+Deliver a high-signal, security-aware code review entirely inside the CLI harness - no MCP agents or external automation required. Mirrors the manual process we just ran.
 
 ## Usage
 ```bash
@@ -30,7 +30,7 @@ Deliver a high-signal, security-aware code review entirely inside the CLI harnes
 ## Output Template
 ```
 Findings
-- High – <title> (<file:line>): <issue + fix>
+- High - <title> (<file:line>): <issue + fix>
 - Medium – ...
 
 Verification
