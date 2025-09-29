@@ -30,7 +30,7 @@ Use this command when a pull request already exists and Codex needs to process r
 - **GitHub CLI available:**
   ```bash
   PR_NUMBER=${ARGUMENTS:-$(gh pr view --json number --jq '.number')}
-  gh pr view "$PR_NUMBER" --json reviewComments,comments > "$COMMENTS_JSON"
+  gh pr view "$PR_NUMBER" --json reviewThreads,comments > "$COMMENTS_JSON"
   ```
 - **Comment export provided:** copy the file into `COMMENTS_JSON` and record the provenance (local export, pasted notes, etc.).
 - **Manual input:** ask the user to supply comments via scratch file; store them in `COMMENTS_JSON` using `cat <<'EOF'`.
@@ -38,16 +38,17 @@ Use this command when a pull request already exists and Codex needs to process r
 
 ## Phase 3 – Analyse & Prioritise
 1. Derive actionable entries with `jq` and write a markdown summary table to `TRIAGE_MD`. Include: `comment_id`, `author`, `file:line`, severity, and short excerpt.
-2. Severity heuristics inspired by `/copilot-expanded`:
-   - Contains `security`, `vulnerability`, `injection` → **critical**
-   - Mentions `fail`, `bug`, `error`, `crash` → **bug`
-   - References tests or coverage → **testing**
-   - Everything else → **quality`
+2. Sort the table by severity using a cautious heuristic:
+   - Mentions of "security", "failing", "bug", or similar high-risk keywords ⇒ **blocking**
+   - Questions about security, correctness, or stability (e.g., "Is this safe?", "Could this leak data?", "Does this handle errors?") ⇒ **blocking**
+   - Other questions (e.g., "Why did you choose this approach?", "Can this be simplified?") ⇒ **follow-up**
+   - Style or minor wording items ⇒ **nit**
+   - When ambiguous, err on the side of caution and categorise as **blocking** if it could impact functionality or safety. Example: "Should we validate user input here?" ⇒ **blocking**
 3. Count totals (overall, actionable, already replied) and log them to `OPERATIONS_LOG` with timestamps.
 4. Produce a work plan grouping comments by file or subsystem. Highlight dependencies (e.g., “update fixture before fixing tests”).
 
 ## Phase 4 – Implement Fixes
-- Tackle items in priority order: critical → bug → testing → quality.
+- Tackle items in priority order: blocking → follow-up → nit, noting that blocking items include security and correctness concerns.
 - For each batch of related comments:
   1. Apply edits using Edit/MultiEdit.
   2. Record affected files and commands in `OPERATIONS_LOG`.
@@ -59,6 +60,7 @@ Use this command when a pull request already exists and Codex needs to process r
 2. Capture outputs verbatim in the session, noting pass/fail status.
 3. If tests fail, loop back to Phase 4 with a concise bug report and log the failure in `OPERATIONS_LOG`.
 4. Optionally check mergeability with `gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable'` when `gh` is available.
+5. Re-run quick lint/type checks when they relate to the feedback (e.g., formatting feedback).
 
 ## Phase 6 – Draft Responses & Evidence
 1. For each actionable comment, draft a markdown reply in `REPLIES_MD` with sections:
@@ -88,7 +90,7 @@ Use this command when a pull request already exists and Codex needs to process r
 Source: <gh api | local export | manual>
 
 Comment Summary (stored in $WORK_DIR/triage.md)
-- [critical] src/api.py:120 (alice) – ensure auth middleware handles 401...
+- [blocking] src/api.py:120 (alice) – ensure auth middleware handles 401...
 ...
 
 Actions

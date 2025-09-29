@@ -14,7 +14,7 @@ Run this command when you want Codex to take a change from idea to a ready-to-sh
 - Establish a scratch plan file (e.g. note in conversation) instead of writing to protected docs.
 
 ## Phase 1 – Deep Understanding & Plan
-- Analyse the request, existing code, and relevant tests. Use `rg`, `ls`, or targeted file reads only as needed.
+- Analyze the request, existing code, and relevant tests. Use `rg`, `ls`, or targeted file reads only as needed.
 - Produce a concise plan (3–6 steps) that maps work items to files/test suites. Ask for confirmation when scope is ambiguous.
 
 ## Phase 2 – Implementation
@@ -23,7 +23,7 @@ Run this command when you want Codex to take a change from idea to a ready-to-sh
 - After each major edit, show `git diff --stat` (or relevant snippet) so progress stays visible.
 
 ## Phase 3 – Validation
-- Prefer `./run_tests.sh` when runtime is reasonable; otherwise run the smallest meaningful subset (e.g. `pytest -k <pattern>` or module-level scripts).
+- If `./run_tests.sh` exists and runtime is reasonable, prefer running it. Otherwise, check for project-specific test commands (e.g. `pytest` for Python, `npm test` for Node.js, or module-level scripts) and run the smallest meaningful subset (e.g. `pytest -k <pattern>`). Always explain which test command was chosen and why.
 - Capture command output in the response. If tests are skipped, explain why and list follow-up steps.
 - Optionally run lightweight lint or type checks that ship in this repo.
 
