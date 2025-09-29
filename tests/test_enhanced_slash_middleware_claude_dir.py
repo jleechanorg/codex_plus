@@ -65,3 +65,51 @@ def test_claude_overrides_codexplus_when_duplicate():
                         parent.rmdir()
             except Exception:
                 pass
+
+
+def test_home_codexplus_used_when_local_missing(monkeypatch, tmp_path):
+    """Commands in ~/.codexplus/commands resolve even if repo lacks them."""
+    fake_home = tmp_path / "home"
+    cmd_dir = fake_home / ".codexplus" / "commands"
+    created = write_cmd(cmd_dir, "homecmd", description="From home .codexplus")
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    try:
+        mw = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
+        resolved = mw.find_command_file("homecmd")
+        assert resolved is not None
+        assert str(cmd_dir) in str(resolved)
+    finally:
+        created.unlink(missing_ok=True)
+        # cleanup test directories we created under the fake home
+        current = cmd_dir
+        while current != fake_home and current.exists() and not any(current.iterdir()):
+            current.rmdir()
+            current = current.parent
+
+
+def test_local_codexplus_precedence_over_home(monkeypatch, tmp_path):
+    """Local .codexplus/commands outranks ~/.codexplus/commands."""
+    local_dir = Path(".codexplus/commands")
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_file = write_cmd(local_dir, "priority", description="Local win")
+
+    fake_home = tmp_path / "home"
+    home_cmd_dir = fake_home / ".codexplus" / "commands"
+    home_file = write_cmd(home_cmd_dir, "priority", description="Home fallback")
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    try:
+        mw = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
+        resolved = mw.find_command_file("priority")
+        assert resolved is not None
+        assert str(local_dir) in str(resolved)
+    finally:
+        local_file.unlink(missing_ok=True)
+        if not any(local_dir.iterdir()):
+            local_dir.rmdir()
+        home_file.unlink(missing_ok=True)
+        current = home_cmd_dir
+        while current != fake_home and current.exists() and not any(current.iterdir()):
+            current.rmdir()
+            current = current.parent

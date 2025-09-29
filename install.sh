@@ -96,7 +96,7 @@ main() {
   rc_file="$(choose_shell_rc)"
   echo "Using shell configuration: $rc_file"
   append_snippet "$rc_file"
-  echo "\nNext steps:"
+  printf '\nNext steps:\n'
   echo "  1. source \"$rc_file\" (or restart your shell)."
   echo "  2. Run \"codex-plus-proxy enable\" to start the proxy (aliases to proxy.sh)."
   echo "  3. Use \"codex\" or \"codexd\" to automatically route through Codex-Plus when the proxy is running."

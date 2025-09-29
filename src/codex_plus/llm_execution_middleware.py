@@ -51,6 +51,7 @@ class LLMExecutionMiddleware:
         self.claude_dir = self._find_claude_dir()
         self.commands_dir = self.claude_dir / "commands" if self.claude_dir else None
         self.codexplus_dir = Path(".codexplus/commands")
+        self.home_codexplus_dir = Path.home() / ".codexplus" / "commands"
         
     def _find_claude_dir(self) -> Optional[Path]:
         """Find .claude directory in project hierarchy"""
@@ -96,19 +97,18 @@ class LLMExecutionMiddleware:
         return commands
     
     def find_command_file(self, command_name: str) -> Optional[Path]:
-        """Find command file in .codexplus/commands or .claude/commands"""
-        # Check .codexplus/commands first (higher priority)
-        if self.codexplus_dir.exists():
-            command_file = self.codexplus_dir / f"{command_name}.md"
+        """Locate command definition with local .codexplus, home ~/.codexplus, then .claude."""
+        search_roots = [self.codexplus_dir, self.home_codexplus_dir]
+        if self.commands_dir:
+            search_roots.append(self.commands_dir)
+
+        for root in search_roots:
+            if not root or not root.exists():
+                continue
+            command_file = root / f"{command_name}.md"
             if command_file.exists():
                 return command_file
-        
-        # Then check .claude/commands
-        if self.commands_dir and self.commands_dir.exists():
-            command_file = self.commands_dir / f"{command_name}.md"
-            if command_file.exists():
-                return command_file
-        
+
         return None
     
     def create_execution_instruction(self, commands: List[Tuple[str, str]]) -> str:

@@ -44,6 +44,7 @@ CRONTAB_ENTRY="@reboot cd $SCRIPT_DIR && ./proxy.sh enable"
 
 # Provider configuration
 PROVIDER_MODE="openai"
+FORCE_RESTART="false"
 
 # Colors for output
 RED='\033[0;31m'
@@ -72,10 +73,36 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [ ${#POSITIONAL_ARGS[@]} -eq 0 ]; then
+    POSITIONAL_ARGS=("enable")
+fi
+
 set -- "${POSITIONAL_ARGS[@]}"
+
+COMMAND="${1:-enable}"
+if [ "$PROVIDER_MODE" = "cerebras" ] && { [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "start" ]; }; then
+    FORCE_RESTART="true"
+fi
 
 configure_provider_environment() {
     if [ "$PROVIDER_MODE" = "cerebras" ]; then
+        local sourced_env=false
+        if [ -z "${CEREBRAS_API_KEY:-}" ] || [ -z "${CEREBRAS_BASE_URL:-}" ] || [ -z "${CEREBRAS_MODEL:-}" ]; then
+            if [ -f "$HOME/.bashrc" ]; then
+                local bashrc_exports
+                bashrc_exports=$(bash -ic '
+                    source ~/.bashrc >/dev/null 2>&1
+                    printf "export CEREBRAS_API_KEY=%q\\n" "$CEREBRAS_API_KEY"
+                    printf "export CEREBRAS_BASE_URL=%q\\n" "$CEREBRAS_BASE_URL"
+                    printf "export CEREBRAS_MODEL=%q\\n" "$CEREBRAS_MODEL"
+                ' 2>/dev/null || true)
+                if [ -n "$bashrc_exports" ]; then
+                    eval "$bashrc_exports"
+                    sourced_env=true
+                fi
+            fi
+        fi
+
         local missing_vars=()
         for var in CEREBRAS_API_KEY CEREBRAS_BASE_URL CEREBRAS_MODEL; do
             if [ -z "${!var:-}" ]; then
@@ -84,6 +111,11 @@ configure_provider_environment() {
         done
 
         if [ "${#missing_vars[@]}" -gt 0 ]; then
+            if [ "$sourced_env" = true ]; then
+                echo -e "${YELLOW}ℹ️  Loaded ~/.bashrc but Cerebras variables are still missing${NC}" >&2
+            else
+                echo -e "${YELLOW}ℹ️  Cerebras variables not set; add them to ~/.bashrc or export beforehand${NC}" >&2
+            fi
             echo -e "${RED}❌ Missing required Cerebras environment variable(s): ${missing_vars[*]}${NC}" >&2
             echo -e "${YELLOW}💡 Export CEREBRAS_API_KEY, CEREBRAS_BASE_URL, and CEREBRAS_MODEL before starting in Cerebras mode${NC}" >&2
             return 1
@@ -210,7 +242,9 @@ start_proxy() {
     trap 'if [ "${startup_success:-false}" != true ]; then rm -f "$LOCK_FILE"; fi' EXIT
 
     # Check if already running (after acquiring lock)
-    if print_status >/dev/null 2>&1; then
+    if [ "${FORCE_RESTART}" = "true" ]; then
+        echo -e "${YELLOW}♻️  Force restart requested (${PROVIDER_MODE} mode) - continuing${NC}"
+    elif print_status >/dev/null 2>&1; then
         echo -e "${YELLOW}⚠️  Proxy is already running${NC}"
         return 0
     fi
@@ -602,13 +636,14 @@ show_help() {
     echo "Examples:"
     echo "  $0 enable                                    # Start proxy"
     echo "  $0 status                                    # Check status"
-    echo "  $0 --cerebras enable                          # Start proxy using Cerebras environment"
+    echo "  $0 --cerebras                                # Start proxy using Cerebras environment"
+    echo "  $0 --cerebras enable                          # Equivalent explicit command"
     echo "  OPENAI_BASE_URL=http://localhost:10000 codex  # Use with codex"
     echo "  $0 disable                                   # Stop proxy"
 }
 
 # Main command handling
-case "${1:-enable}" in
+case "$COMMAND" in
     "enable"|"start")
         start_proxy
         ;;
