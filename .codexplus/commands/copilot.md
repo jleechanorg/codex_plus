@@ -1,82 +1,116 @@
 ---
 name: copilot
-description: "Process review feedback, apply fixes, and draft replies using only Codex CLI tools"
+description: "Self-contained Codex workflow for processing PR feedback and drafting responses"
 argument-hint: "<comment-export.json | PR number | optional notes>"
 ---
 
-# /copilot — Review Feedback Helper (Codex Edition)
+# /copilot — Expanded Review Workflow (Codex Edition)
 
-Use this command when a pull request already exists and you need Codex to work through reviewer feedback. It mirrors the intent of the Claude `/copilot` workflow but stays within tools that ship in this repository.
+Use this command when a pull request already exists and Codex needs to process reviewer feedback end-to-end. It mirrors the Claude `/copilot-expanded` flow but stays compatible with the tooling available in this repository.
 
-## Inputs & Context
-- If `$ARGUMENTS` points to a local JSON/NDJSON export (from `gh api` or the GitHub UI), load it with `jq`.
-- If the argument looks like a PR number and the GitHub CLI (`gh`) is available, gather comments with
-  `gh pr view $pr --json reviewComments,comments`.
-- If neither is available, ask the user to paste the feedback or point to a scratch file inside the repo.
-- Always record which source was used in the final summary.
+## Phase 0 – Preconditions
+- Ensure `git status -sb` shows only changes relevant to the PR.
+- Confirm the current branch matches the PR branch (`git branch --show-current`).
+- If the argument is a PR number, verify `gh` is authenticated; otherwise prepare a local comment export or manual notes.
 
-## Phase 1 – Snapshot & Prioritise
-1. Confirm current branch and diff with `git status -sb` and `git diff --stat`.
-2. Build a comment table capturing: `id`, `author`, `type (blocking/nit/question)`, `file:line`, and a short excerpt.
-3. Sort the table by severity using a simple heuristic:
-   - Mentions of "security", "failing", "bug" ⇒ **blocking**
-   - Questions ⇒ **follow-up**
-   - Style/minor wording ⇒ **nit**
+## Phase 1 – Workspace Setup
+1. Capture a start timestamp: `START_TIME=$(date +%s)`.
+2. Create a scratch directory for artifacts: `WORK_DIR=$(mktemp -d)`.
+3. Define paths inside `WORK_DIR` for raw comments, triage tables, draft replies, and logs. Example:
+   ```bash
+   COMMENTS_JSON="$WORK_DIR/comments.json"
+   TRIAGE_MD="$WORK_DIR/triage.md"
+   REPLIES_MD="$WORK_DIR/replies.md"
+   OPERATIONS_LOG="$WORK_DIR/operations.log"
+   ```
+4. Document these paths in the session output so the user can inspect them later.
+5. Register a cleanup plan (`trap 'rm -rf "$WORK_DIR"' EXIT`) or explicitly remind the user to remove the directory.
 
-## Phase 2 – Triage & Plan
-- Group comments by file so fixes can be batched efficiently.
-- Generate a short action plan that maps each comment group to files/tests.
-- Identify any comments that require clarification and flag them early.
+## Phase 2 – Collect Review Feedback
+- **GitHub CLI available:**
+  ```bash
+  PR_NUMBER=${ARGUMENTS:-$(gh pr view --json number --jq '.number')}
+  gh pr view "$PR_NUMBER" --json reviewComments,comments > "$COMMENTS_JSON"
+  ```
+- **Comment export provided:** copy the file into `COMMENTS_JSON` and record the provenance (local export, pasted notes, etc.).
+- **Manual input:** ask the user to supply comments via scratch file; store them in `COMMENTS_JSON` using `cat <<'EOF'`.
+- Validate JSON with `jq empty "$COMMENTS_JSON"`; abort gracefully if parsing fails.
 
-## Phase 3 – Implement Fixes
-- Apply changes with Edit/MultiEdit; keep commits small and reference the comment ids in inline notes when helpful.
-- After each batch, show the relevant portion of `git diff` so the user can verify.
-- Prioritise blocking issues first, then questions, then nits.
+## Phase 3 – Analyse & Prioritise
+1. Derive actionable entries with `jq` and write a markdown summary table to `TRIAGE_MD`. Include: `comment_id`, `author`, `file:line`, severity, and short excerpt.
+2. Severity heuristics inspired by `/copilot-expanded`:
+   - Contains `security`, `vulnerability`, `injection` → **critical**
+   - Mentions `fail`, `bug`, `error`, `crash` → **bug`
+   - References tests or coverage → **testing**
+   - Everything else → **quality`
+3. Count totals (overall, actionable, already replied) and log them to `OPERATIONS_LOG` with timestamps.
+4. Produce a work plan grouping comments by file or subsystem. Highlight dependencies (e.g., “update fixture before fixing tests”).
 
-## Phase 4 – Validate
-- Run targeted tests mentioned in the comments; fall back to `pytest -q` or `./run_tests.sh` when unsure.
-- Capture command outputs. If tests cannot run, explain why and suggest next steps.
-- Re-run quick lint/type checks when they relate to the feedback (e.g., formatting complaints).
+## Phase 4 – Implement Fixes
+- Tackle items in priority order: critical → bug → testing → quality.
+- For each batch of related comments:
+  1. Apply edits using Edit/MultiEdit.
+  2. Record affected files and commands in `OPERATIONS_LOG`.
+  3. Display focused diffs (`git diff -- <file>` or `git diff --stat`) so the user can verify progress.
+- Use temporary branches or stashes if risky experiments are required; always return to the main PR branch before continuing.
 
-## Phase 5 – Draft Replies & Evidence
-- For every comment, prepare a structured reply with:
-  - `Status`: resolved / needs input / needs escalation
-  - `Action taken`: code or test summary referencing commit hashes or diff snippets
-  - `Reply text`: ready-to-paste Markdown (prefix with `[AI helper codex]` for traceability)
-- Do **not** attempt to post via API; just surface the replies in the response body.
-- Include links to relevant lines using repository-relative paths when possible (`src/module/file.py:123`).
+## Phase 5 – Validation Gates
+1. Run targeted checks referenced by reviewers; fall back to `pytest -k ...` or `./run_tests.sh` if uncertain.
+2. Capture outputs verbatim in the session, noting pass/fail status.
+3. If tests fail, loop back to Phase 4 with a concise bug report and log the failure in `OPERATIONS_LOG`.
+4. Optionally check mergeability with `gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable'` when `gh` is available.
 
-## Phase 6 – Wrap Up
-- Summarise overall progress: number of comments resolved vs outstanding, tests run, remaining blockers.
-- If follow-up is required from the reviewer, list concrete questions.
-- Recommend next manual steps (e.g., run `git commit`, push branch, post replies in GitHub UI).
+## Phase 6 – Draft Responses & Evidence
+1. For each actionable comment, draft a markdown reply in `REPLIES_MD` with sections:
+   - `Status` (resolved / needs input / blocked)
+   - `Action Taken` (code summary, tests, commit hash if available)
+   - `Reply` text prefixed with `[AI helper codex]`
+2. Reference files as `path/to/file.py:123` to aid reviewers.
+3. Compute response coverage with a safe default:
+   ```bash
+   RESPONDED=$(grep -c '^## Comment ' "$REPLIES_MD" 2>/dev/null || echo 0)
+   ACTIONABLE=$(grep -c 'severity:' "$TRIAGE_MD" 2>/dev/null || echo 0)
+   if [ "$ACTIONABLE" -gt 0 ]; then
+     COVERAGE=$(( RESPONDED * 100 / ACTIONABLE ))
+   else
+     COVERAGE=100
+   fi
+   ```
+4. Flag any comments that need escalation or reviewer clarification.
 
-## Safety Rails
-- Stop immediately if fetching comments fails and let the user decide how to proceed.
-- Never delete reviewer comments or rewrite history without explicit approval.
-- Keep temporary artefacts in `/tmp` and clean them up before finishing.
+## Phase 7 – Wrap Up & Handoff
+- Summarise key metrics: execution duration (`$(date +%s) - START_TIME`), files touched, tests run, response coverage.
+- Provide next steps for the user (e.g., `git commit`, push, paste replies in GitHub UI).
+- Remind the user to inspect and then remove `WORK_DIR` unless they wish to archive it.
 
 ## Expected Output Skeleton
 ```
-Source: <comment export | gh PR | manual input>
+Source: <gh api | local export | manual>
 
-Comment Table
-- [blocking] file.py:42 (author) – summary
+Comment Summary (stored in $WORK_DIR/triage.md)
+- [critical] src/api.py:120 (alice) – ensure auth middleware handles 401...
 ...
 
 Actions
-- ✅ Comment 123 – fixed with ... (tests: ...)
-- 🔄 Comment 127 – needs clarification: ...
+- ✅ Comment 42 – fixed in src/api.py (tests: pytest -k auth)
+- 🔄 Comment 51 – needs reviewer input about staging data
 
-Draft Replies
-1. [AI helper codex] ...
+Draft Replies (see $WORK_DIR/replies.md)
+1. [AI helper codex] Thanks for flagging the auth bypass... (resolved)
 
-Tests
-- pytest -k foo  (pass)
+Metrics
+- Duration: 18m
+- Files touched: 4
+- Tests: pytest -k auth (pass)
+- Coverage: 5/6 actionable (83%)
 
 Next Steps
-- [1] Post replies in GitHub UI
-- [2] git commit -am "..." (pending)
+- Post replies in GitHub UI
+- git commit -am "fix: harden auth middleware" (pending)
 ```
 
-The goal is to leave the user with reviewed code, passing tests, and high quality draft responses they can copy into the PR.
+## Safety Rails
+- Abort if comment collection fails; request new input before proceeding.
+- Never post to GitHub automatically; all communication stays local for the user to copy.
+- Clean up temporary directories and redact sensitive data from logs before finishing.
+- If automation (e.g., `gh`) is unavailable, fall back to manual steps and document the limitation in the summary.
