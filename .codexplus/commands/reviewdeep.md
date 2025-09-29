@@ -31,7 +31,7 @@ Deliver a high-signal, security-aware code review entirely inside the CLI harnes
 ```
 Findings
 - High - <title> (<file:line>): <issue + fix>
-- Medium – ...
+- Medium - ...
 
 Verification
 - Tests: <commands> (pass/fail)
