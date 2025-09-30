@@ -79,7 +79,26 @@ if not logger.handlers:
 
 # 🔒 PROTECTED CONFIGURATION - DO NOT MODIFY 🔒
 # CRITICAL: This URL MUST remain exactly as specified for Codex to work
-UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Codex
+# Support dynamic upstream based on provider mode (Cerebras or ChatGPT)
+def _get_upstream_url() -> str:
+    """Get upstream URL from provider configuration or default to ChatGPT"""
+    provider_base_url_file = "/tmp/codex_plus/provider.base_url"
+    default_url = "https://chatgpt.com/backend-api/codex"
+
+    try:
+        if os.path.exists(provider_base_url_file):
+            with open(provider_base_url_file, 'r') as f:
+                url = f.read().strip()
+                if url:
+                    logger.info(f"📡 Using upstream URL from provider config: {url}")
+                    return url
+    except Exception as e:
+        logger.warning(f"Failed to read provider base URL: {e}")
+
+    logger.info(f"📡 Using default upstream URL: {default_url}")
+    return default_url
+
+UPSTREAM_URL = _get_upstream_url()
 # ⚠️ Changing this URL will break all Codex functionality ⚠️
 
 # Security validation
@@ -120,10 +139,19 @@ def _validate_upstream_url(url: str) -> bool:
     """Validate that upstream URL is allowed"""
     try:
         parsed = urlparse(url)
-        # Only allow HTTPS to ChatGPT backend
-        return (parsed.scheme == 'https' and
-                parsed.hostname == 'chatgpt.com' and
-                parsed.path.startswith('/backend-api/'))
+        # Allow HTTPS to ChatGPT backend or Cerebras API
+        if parsed.scheme != 'https':
+            return False
+
+        # ChatGPT backend
+        if parsed.hostname == 'chatgpt.com' and parsed.path.startswith('/backend-api/'):
+            return True
+
+        # Cerebras API
+        if parsed.hostname == 'api.cerebras.ai' and parsed.path.startswith('/v1'):
+            return True
+
+        return False
     except Exception:
         return False
 
