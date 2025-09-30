@@ -15,16 +15,24 @@ Use this command when a pull request already exists and Codex needs to process r
 
 ## Phase 1 – Workspace Setup
 1. Capture a start timestamp: `START_TIME=$(date +%s)`.
-2. Create a scratch directory for artifacts: `WORK_DIR=$(mktemp -d)`.
+2. Create a namespaced scratch root under `/tmp` so artifacts stay grouped by repo and branch:
+   ```bash
+   REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
+   CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   SCRATCH_ROOT="/tmp/${REPO_NAME}__${CURRENT_BRANCH}"
+   mkdir -p "$SCRATCH_ROOT"
+   WORK_DIR=$(mktemp -d "$SCRATCH_ROOT/copilot.XXXXXX")
+   ```
 3. Define paths inside `WORK_DIR` for raw comments, triage tables, draft replies, and logs. Example:
    ```bash
    COMMENTS_JSON="$WORK_DIR/comments.json"
    TRIAGE_MD="$WORK_DIR/triage.md"
    REPLIES_MD="$WORK_DIR/replies.md"
+   RESPONSES_JSON="$WORK_DIR/responses.json"
    OPERATIONS_LOG="$WORK_DIR/operations.log"
    ```
-4. Document these paths in the session output so the user can inspect them later.
-5. Register a cleanup plan (`trap 'rm -rf "$WORK_DIR"' EXIT`) or explicitly remind the user to remove the directory.
+4. Document `SCRATCH_ROOT` and these artifact paths in the session output so the user can inspect them later.
+5. Register a cleanup plan (`trap 'rm -rf "$WORK_DIR"' EXIT`) or explicitly remind the user to remove the directory (and the parent `SCRATCH_ROOT` when empty).
 
 ## Phase 2 – Collect Review Feedback
 - **GitHub CLI available:**
@@ -66,10 +74,10 @@ Use this command when a pull request already exists and Codex needs to process r
 5. Re-run quick lint/type checks when they relate to the feedback (e.g., formatting feedback).
 
 ## Phase 6 – Draft Responses & Evidence
-1. For each actionable comment, draft a markdown reply in `REPLIES_MD` with sections:
+1. For each actionable comment, capture the REST `comment_id` (e.g., `gh api ... --jq '.id'`) and draft a markdown reply in `REPLIES_MD` with sections:
    - `Status` (resolved / needs input / blocked)
    - `Action Taken` (code summary, tests, commit hash if available)
-   - `Reply` text prefixed with `[AI helper codex]`
+   - `Reply` text prefixed with `[AI responder]` to comply with auto-posting requirements
 2. Reference files as `path/to/file.py:123` to aid reviewers.
 3. Compute response coverage with a safe default:
    ```bash
@@ -81,41 +89,68 @@ Use this command when a pull request already exists and Codex needs to process r
      COVERAGE=100
    fi
    ```
-4. Flag any comments that need escalation or reviewer clarification.
+4. Materialise API-ready responses for auto-posting (use numeric `comment_id` values from `gh api`):
+   ```bash
+   cat <<'EOF' > "$RESPONSES_JSON"
+   {
+     "responses": [
+       {
+         "comment_id": 1234567890,
+         "reply_text": "[AI responder] DONE – replace with your actual reply text"
+       }
+     ]
+   }
+   EOF
+   ```
+   Add or edit entries per comment before posting.
+5. Copy the payload to the legacy branch scratch (for `commentreply.py`) and trigger the auto-posting step:
+   ```bash
+   LEGACY_BRANCH_ROOT="/tmp/${CURRENT_BRANCH}"
+   mkdir -p "$LEGACY_BRANCH_ROOT"
+   cp "$RESPONSES_JSON" "$LEGACY_BRANCH_ROOT/responses.json"
+   OWNER=$(gh repo view --json owner --jq '.owner.login')
+   REPO=$(gh repo view --json name --jq '.name')
+   PR_NUMBER=${PR_NUMBER:-$(gh pr view --json number --jq '.number')}
+   python ~/.claude/commands/commentreply.py "$OWNER" "$REPO" "$PR_NUMBER"
+   ```
+   Review the script output for `✅ SUCCESS` lines and capture URLs in `OPERATIONS_LOG`.
+6. Flag any comments that need escalation or reviewer clarification.
 
 ## Phase 7 – Wrap Up & Handoff
 - Summarise key metrics: execution duration (`$(date +%s) - START_TIME`), files touched, tests run, response coverage.
 - Provide next steps for the user (e.g., `git commit`, push, paste replies in GitHub UI).
-- Remind the user to inspect and then remove `WORK_DIR` unless they wish to archive it.
+- Remind the user to inspect and then remove `WORK_DIR` (and clean up `/tmp/${REPO_NAME}__${CURRENT_BRANCH}` if empty) unless they wish to archive it.
 
 ## Expected Output Skeleton
-```
+```text
 Source: <gh api | local export | manual>
 
-Comment Summary (stored in $WORK_DIR/triage.md)
-- [blocking] src/api.py:120 (alice) – ensure auth middleware handles 401...
-...
+Comment Summary (stored in $WORK_DIR/triage.md within /tmp/${REPO_NAME}__${CURRENT_BRANCH})
+- [blocking] path/to/file.py:120 (alice) – ensure auth middleware handles 401...
+- [follow-up] docs/update.md:45 (reviewer) – clarify CLI flag behaviour
 
 Actions
-- ✅ Comment 42 – fixed in src/api.py (tests: pytest -k auth)
-- 🔄 Comment 51 – needs reviewer input about staging data
+- ✅ Added language hint to Expected Output Skeleton (.codexplus/commands/copilot.md:92)
+- ✅ Posted replies via commentreply.py (see OPERATIONS_LOG URLs)
+- ✅ pytest -q (pass)
 
-Draft Replies (see $WORK_DIR/replies.md)
-1. [AI helper codex] Thanks for flagging the auth bypass... (resolved)
+Draft Replies (see $WORK_DIR/replies.md within /tmp/${REPO_NAME}__${CURRENT_BRANCH})
+1. [AI responder] Thanks for flagging the auth bypass... (resolved)
+2. [AI responder] Confirmed CLI flag behaviour... (resolved)
 
 Metrics
 - Duration: 18m
 - Files touched: 4
-- Tests: pytest -k auth (pass)
+- Tests: pytest -q (pass)
 - Coverage: 5/6 actionable (83%)
+- Auto-post: commentreply.py ✅
 
 Next Steps
-- Post replies in GitHub UI
+- sanity-check posted replies on GitHub
 - git commit -am "fix: harden auth middleware" (pending)
 ```
 
 ## Safety Rails
 - Abort if comment collection fails; request new input before proceeding.
-- Never post to GitHub automatically; all communication stays local for the user to copy.
 - Clean up temporary directories and redact sensitive data from logs before finishing.
 - If automation (e.g., `gh`) is unavailable, fall back to manual steps and document the limitation in the summary.
