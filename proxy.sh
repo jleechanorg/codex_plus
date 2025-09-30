@@ -36,6 +36,7 @@ RUNTIME_DIR="/tmp/codex_plus"
 PID_FILE="$RUNTIME_DIR/proxy.pid"
 LOG_FILE="$RUNTIME_DIR/proxy.log"
 LOCK_FILE="$RUNTIME_DIR/proxy.lock"
+BASE_URL_FILE="$RUNTIME_DIR/provider.base_url"
 # Autostart configuration
 AUTOSTART_LABEL="com.codex.plus.proxy"
 LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
@@ -45,6 +46,7 @@ CRONTAB_ENTRY="@reboot cd $SCRIPT_DIR && ./proxy.sh enable"
 # Provider configuration
 PROVIDER_MODE="openai"
 FORCE_RESTART="false"
+DEFAULT_UPSTREAM_URL="https://chatgpt.com/backend-api/codex"
 
 # Colors for output
 RED='\033[0;31m'
@@ -125,11 +127,25 @@ configure_provider_environment() {
         export OPENAI_API_KEY="$CEREBRAS_API_KEY"
         export OPENAI_BASE_URL="$CEREBRAS_BASE_URL"
         export OPENAI_MODEL="$CEREBRAS_MODEL"
+        printf '%s\n' "$CEREBRAS_BASE_URL" > "$BASE_URL_FILE"
         echo -e "${BLUE}🌐 Cerebras mode enabled - proxy will use Cerebras credentials${NC}"
     else
         export CODEX_PLUS_PROVIDER_MODE="openai"
+        printf '%s\n' "$DEFAULT_UPSTREAM_URL" > "$BASE_URL_FILE"
     fi
     echo "$PROVIDER_MODE" > "$RUNTIME_DIR/provider.mode"
+}
+
+get_upstream_url() {
+    if [ -f "$BASE_URL_FILE" ]; then
+        local upstream
+        upstream=$(cat "$BASE_URL_FILE" 2>/dev/null)
+        if [ -n "$upstream" ]; then
+            printf '%s' "$upstream"
+            return
+        fi
+    fi
+    printf '%s' "$DEFAULT_UPSTREAM_URL"
 }
 
 validate_pid() {
@@ -187,7 +203,7 @@ print_status() {
                     echo -e "  ${GREEN}🌐 Mode:${NC} $provider_display"
                 fi
             fi
-            echo -e "  ${GREEN}📊 Usage:${NC} OPENAI_BASE_URL=http://localhost:10000 codex"
+            echo -e "  ${GREEN}📊 Upstream:${NC} $(get_upstream_url)"
             return 0
         else
             # Only clean up stale resources if PID validation fails
@@ -365,7 +381,7 @@ except Exception as e:
         echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
         echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
         echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
-        echo -e "  ${GREEN}📊 Usage:${NC} OPENAI_BASE_URL=http://localhost:10000 codex"
+        echo -e "  ${GREEN}📊 Upstream:${NC} $(get_upstream_url)"
         return 0
     else
         echo -e "${RED}❌ Failed to start proxy or service is not responding${NC}"
