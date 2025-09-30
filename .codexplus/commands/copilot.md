@@ -30,7 +30,10 @@ Use this command when a pull request already exists and Codex needs to process r
 - **GitHub CLI available:**
   ```bash
   PR_NUMBER=${ARGUMENTS:-$(gh pr view --json number --jq '.number')}
-  gh pr view "$PR_NUMBER" --json reviewComments,comments > "$COMMENTS_JSON"
+  gh pr view "$PR_NUMBER" --json comments,reviews > "$COMMENTS_JSON"
+  # Need inline review threads? Capture them separately and merge:
+  # gh api graphql -f query='query($pr:Int!){repository(owner:"<owner>",name:"<repo>"){pullRequest(number:$pr){reviewThreads{nodes{comments{body,path,startLine,line}}}}}}' -f pr="$PR_NUMBER" > "$WORK_DIR/review_threads.json"
+  # Combine thread data into "$COMMENTS_JSON" with jq before continuing.
   ```
 - **Comment export provided:** copy the file into `COMMENTS_JSON` and record the provenance (local export, pasted notes, etc.).
 - **Manual input:** ask the user to supply comments via scratch file; store them in `COMMENTS_JSON` using `cat <<'EOF'`.
