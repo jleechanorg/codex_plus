@@ -371,6 +371,36 @@ export NO_NETWORK=1                           # CI simulation mode
 5. **Integration Testing**: Test with actual Codex CLI and slash commands
 6. **Documentation**: Update CLAUDE.md and architecture documentation
 
+## Cerebras Code Generation
+
+### Using /cereb Command
+
+The `/cereb` slash command uses Cerebras for rapid code generation. **IMPORTANT**: Always use the `--no-auto-context` flag to avoid context poisoning:
+
+```bash
+# ❌ WRONG - Context extraction includes CLAUDE.md rules
+cerebras_direct.sh "generate code"
+
+# ✅ CORRECT - Skip auto-context for code generation
+cerebras_direct.sh --no-auto-context "generate code"
+```
+
+**Why This Matters:**
+- The context extractor includes CLAUDE.md file creation rules
+- LLM responds to those rules instead of generating code
+- Results in rule violations and critiques instead of actual code
+- Using `--no-auto-context` bypasses this issue
+
+**Alternative Flags:**
+- `--light` - Fastest mode, no system prompts (use for simple tasks)
+- `--skip-codegen-sys-prompt` - Documentation-focused mode
+- `--context-file FILE` - Provide specific context file
+
+**When to Use Each Mode:**
+- `--no-auto-context` - Code generation tasks (default recommendation)
+- `--light` - Ultra-fast simple code snippets
+- Default (auto-context) - Documentation, analysis, planning
+
 ## Future Considerations
 
 ### Scalability
