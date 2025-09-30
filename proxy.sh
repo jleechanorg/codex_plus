@@ -139,7 +139,7 @@ configure_provider_environment() {
 get_upstream_url() {
     if [ -f "$BASE_URL_FILE" ]; then
         local upstream
-        upstream=$(cat "$BASE_URL_FILE" 2>/dev/null)
+        read -r upstream < "$BASE_URL_FILE" 2>/dev/null || upstream=""
         if [ -n "$upstream" ]; then
             printf '%s' "$upstream"
             return
