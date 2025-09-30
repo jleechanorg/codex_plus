@@ -320,7 +320,8 @@ start_proxy() {
     # 🚨🚨🚨 CRITICAL PROXY STARTUP COMMAND - DO NOT MODIFY 🚨🚨🚨
     # ⚠️ This command starts the curl_cffi proxy with Cloudflare bypass ⚠️
     # ❌ FORBIDDEN: Changing module, host, port, or import structure
-    nohup python -c "
+    # Use setsid to fully detach the proxy so it survives terminal closure
+    nohup setsid python -c "
 import sys, os
 try:
     from codex_plus.$PROXY_MODULE import app
