@@ -26,10 +26,13 @@ class CodexToCerebrasTransformer:
     - Map model names
     """
 
-    # Model name mapping - will use env CEREBRAS_MODEL or llama-3.3-70b as default
-    MODEL_MAP = {
-        # Map all Codex models to the configured Cerebras model (via __init__)
-        # The actual mapping happens in _map_model which uses self.default_model
+    # Model name mapping - use explicit Cerebras equivalents when known, otherwise
+    # fall back to the configured default model (env override or class default).
+    MODEL_MAP: Dict[str, str] = {
+        "gpt-5-codex": "llama-3.3-70b",
+        "gpt-4.1-codex": "llama-3.1-70b",
+        "gpt-4-codex": "llama-3.1-70b",
+        "gpt-4.1-mini": "llama-3.1-8b",
     }
 
     def __init__(self, default_model: str = None):
@@ -74,17 +77,23 @@ class CodexToCerebrasTransformer:
                 codex_request.get("input", [])
             )
 
-            # 3. Transform tools if present AND model supports tools
-            # Note: qwen models don't support function calling, only llama models do
+            # 3. Transform tools when present. Keep metadata even if the target
+            # model may not execute tool calls so downstream layers can decide.
             if "tools" in codex_request and codex_request["tools"]:
-                if self._model_supports_tools(model):
-                    cerebras_request["tools"] = self._transform_tools(codex_request["tools"])
-                    # Only include tool_choice if tools are present
-                    if "tool_choice" in codex_request:
-                        cerebras_request["tool_choice"] = codex_request["tool_choice"]
-                    logger.info(f"✅ Tools included - {model} supports function calling")
+                cerebras_request["tools"] = self._transform_tools(codex_request["tools"])
+
+                if "tool_choice" in codex_request:
+                    cerebras_request["tool_choice"] = codex_request["tool_choice"]
+
+                if "parallel_tool_calls" in codex_request:
+                    cerebras_request["parallel_tool_calls"] = codex_request["parallel_tool_calls"]
+
+                if not self._model_supports_tools(model):
+                    logger.warning(
+                        f"⚠️  {model} may not support function calling; keeping tool metadata for compatibility"
+                    )
                 else:
-                    logger.warning(f"⚠️  Tools stripped - {model} does not support function calling")
+                    logger.info(f"✅ Tools included - {model} supports function calling")
 
             # 4. Copy compatible fields only
             compatible_fields = ["stream", "temperature", "max_tokens"]
@@ -99,7 +108,6 @@ class CodexToCerebrasTransformer:
                 cerebras_request["max_tokens"] = 4096
 
             # Note: Explicitly dropping Cerebras-unsupported fields that cause 400 errors:
-            # - parallel_tool_calls (not supported by Cerebras)
             # - frequency_penalty (not supported by Cerebras)
             # - logit_bias (not supported by Cerebras)
             # - presence_penalty (not supported by Cerebras)
@@ -127,7 +135,12 @@ class CodexToCerebrasTransformer:
         """
         # For now, all models map to the configured default model
         # This is typically set from CEREBRAS_MODEL env var
-        logger.debug(f"Mapping {codex_model} → {self.default_model}")
+        mapped_model = self.MODEL_MAP.get(codex_model)
+        if mapped_model:
+            logger.debug(f"Mapping {codex_model} → {mapped_model}")
+            return mapped_model
+
+        logger.debug(f"Mapping {codex_model} → {self.default_model} (default)")
         return self.default_model
 
     def _model_supports_tools(self, model: str) -> bool:
@@ -143,9 +156,12 @@ class CodexToCerebrasTransformer:
         # Models that support function calling:
         # - llama models (llama-3.3-70b, etc.)
         # - gpt-oss models (gpt-oss-120b, gpt-oss-20b)
-        # Models that don't support function calling:
-        # - qwen models (qwen-3-coder-480b, etc.)
-        return model.startswith("llama") or model.startswith("gpt-oss")
+        # - Some qwen coder models expose function calling for compatibility
+        return (
+            model.startswith("llama")
+            or model.startswith("gpt-oss")
+            or model.startswith("qwen")
+        )
 
     def _transform_messages(self, instructions: str, input_array: List[Dict]) -> List[Dict]:
         """
@@ -175,11 +191,12 @@ class CodexToCerebrasTransformer:
             })
 
         # 2. Transform each input message
-        for input_msg in input_array:
-            # Remove "type": "message" wrapper
-            if input_msg.get("type") == "message":
+        for input_msg in input_array or []:
+            msg_type = input_msg.get("type")
+
+            if msg_type == "message":
                 transformed_msg = {
-                    "role": input_msg["role"]
+                    "role": input_msg.get("role", "user")
                 }
 
                 # Flatten content array to string
@@ -187,11 +204,62 @@ class CodexToCerebrasTransformer:
                 if content:
                     transformed_msg["content"] = content
 
-                # Handle tool call responses if present
+                # Preserve tool_call_id for tool responses
                 if "tool_call_id" in input_msg:
                     transformed_msg["tool_call_id"] = input_msg["tool_call_id"]
 
                 messages.append(transformed_msg)
+
+            elif msg_type == "function_call":
+                tool_call_id = input_msg.get("call_id") or input_msg.get("id")
+                function_name = input_msg.get("name")
+                arguments = input_msg.get("arguments", "")
+                if not isinstance(arguments, str):
+                    # Ensure arguments are serialized as string per OpenAI schema
+                    import json as _json
+                    try:
+                        arguments = _json.dumps(arguments)
+                    except Exception:
+                        arguments = str(arguments)
+
+                tool_call = {
+                    "id": tool_call_id,
+                    "type": "function",
+                    "function": {
+                        "name": function_name,
+                        "arguments": arguments or "{}"
+                    }
+                }
+
+                messages.append({
+                    "role": "assistant",
+                    "tool_calls": [tool_call]
+                })
+
+            elif msg_type == "function_call_output":
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": input_msg.get("call_id"),
+                    "content": input_msg.get("output", "")
+                })
+
+            elif msg_type == "reasoning":
+                reasoning_text = self._extract_reasoning_summary(input_msg)
+                if reasoning_text:
+                    messages.append({
+                        "role": "assistant",
+                        "content": reasoning_text,
+                        "name": "reasoning"
+                    })
+
+            else:
+                # Preserve unknown message types as assistant commentary for transparency
+                fallback_content = self._extract_content(input_msg.get("content", []))
+                if fallback_content:
+                    messages.append({
+                        "role": input_msg.get("role", "assistant"),
+                        "content": fallback_content
+                    })
 
         return messages
 
@@ -214,10 +282,9 @@ class CodexToCerebrasTransformer:
         text_parts = []
 
         for content_item in content_array:
-            if content_item.get("type") == "input_text":
-                text = content_item.get("text", "")
-                if text:
-                    text_parts.append(text)
+            text = content_item.get("text")
+            if text:
+                text_parts.append(text)
             # Ignore other types (image, etc.) for now
             # TODO: Handle multimodal content if Cerebras supports it
 
@@ -260,3 +327,21 @@ class CodexToCerebrasTransformer:
             openai_tools.append(openai_tool)
 
         return openai_tools
+
+    def _extract_reasoning_summary(self, reasoning_block: Dict[str, Any]) -> Optional[str]:
+        """Extract human-readable reasoning summary when available."""
+        summary_items = reasoning_block.get("summary") or []
+        texts: List[str] = []
+        for item in summary_items:
+            text = item.get("text") if isinstance(item, dict) else None
+            if text:
+                texts.append(text)
+
+        if texts:
+            return "\n".join(texts)
+
+        encrypted = reasoning_block.get("encrypted_content")
+        if encrypted:
+            return "[encrypted reasoning content omitted]"
+
+        return None

@@ -33,12 +33,14 @@ Breaking these rules WILL break all Codex functionality.
 """
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import re
 from fastapi.responses import JSONResponse
 from .cerebras_middleware import CerebrasMiddleware
 import httpx
+from curl_cffi import requests
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +49,6 @@ class LLMExecutionMiddleware:
 
     # Class-level locks to prevent race conditions in session initialization
     _session_init_lock = __import__('threading').Lock()
-    _httpx_client_init_lock = __import__('threading').Lock()
 
     def __init__(self, upstream_url: Optional[str] = None, url_getter: Optional[callable] = None):
         """Initialize middleware with either static URL or dynamic URL getter
@@ -315,7 +316,6 @@ BEGIN EXECUTION NOW:
     async def process_request(self, request, path: str):
         """Process request with execution behavior injection"""
         from fastapi.responses import StreamingResponse
-        from curl_cffi import requests
 
         # Store request for status line access
         self.current_request = request
@@ -323,9 +323,14 @@ BEGIN EXECUTION NOW:
         # Log request headers for debugging
         logger.info(f"📨 Request headers: {dict(request.headers)}")
 
-        # Check if pre-input hooks modified the body
-        if hasattr(request.state, 'modified_body'):
-            body = request.state.modified_body
+        # Check if pre-input hooks modified the body. Starlette's request.state
+        # stores explicit attributes in __dict__, so guard against Mock objects
+        # that auto-create attributes during tests.
+        state_dict = getattr(request.state, "__dict__", {})
+        if "modified_body" in state_dict:
+            body = state_dict["modified_body"]
+            if isinstance(body, str):
+                body = body.encode("utf-8")
             logger.info("Using modified body from pre-input hooks")
         else:
             body = await request.body()
@@ -395,17 +400,22 @@ BEGIN EXECUTION NOW:
         # Apply security header sanitization
         clean_headers = _sanitize_headers(clean_headers)
 
+        is_cerebras = self._is_cerebras_upstream(upstream_url)
+
         # Add Cerebras authentication if using Cerebras upstream
-        if "api.cerebras.ai" in upstream_url:
-            import os
+        if is_cerebras:
             # Try CEREBRAS_API_KEY first, fallback to OPENAI_API_KEY
             cerebras_api_key = os.getenv("CEREBRAS_API_KEY") or os.getenv("OPENAI_API_KEY")
             if cerebras_api_key:
                 clean_headers["Authorization"] = f"Bearer {cerebras_api_key}"
-                logger.info(f"🔑 Added Cerebras API key to request headers (ends with ...{cerebras_api_key[-10:]})")
+                logger.info(
+                    f"🔑 Added Cerebras API key to request headers (ends with ...{cerebras_api_key[-10:]})"
+                )
             else:
-                logger.warning("⚠️  No Cerebras API key found in CEREBRAS_API_KEY or OPENAI_API_KEY environment variable")
-            # Ensure Content-Type is set for JSON requests (required for httpx.Request with content=)
+                logger.warning(
+                    "⚠️  No Cerebras API key found in CEREBRAS_API_KEY or OPENAI_API_KEY environment variable"
+                )
+            # Ensure Content-Type is set for JSON requests (required for httpx.stream)
             if "Content-Type" not in clean_headers and "content-type" not in [k.lower() for k in clean_headers.keys()]:
                 clean_headers["Content-Type"] = "application/json"
 
@@ -417,77 +427,48 @@ BEGIN EXECUTION NOW:
             # - Use curl_cffi for ChatGPT (Cloudflare bypass with Chrome impersonation)
             # - Use httpx for Cerebras (avoid Cloudflare blocking curl_cffi)
 
-            if self._is_cerebras_upstream(target_url):
-                # 🔧 CEREBRAS PATH: Use httpx (Cloudflare blocks curl_cffi impersonation)
-                logger.info("🌐 Using httpx for Cerebras upstream")
-                # Debug: log what we're sending
+            if is_cerebras:
+                # 🔧 CEREBRAS PATH: Use httpx.stream (curl_cffi impersonation fails here)
+                logger.info("🌐 Using httpx.stream for Cerebras upstream")
                 try:
                     debug_body = json.loads(body) if body else {}
-                    logger.info(f"📤 Sending to Cerebras: model={debug_body.get('model')}, messages_count={len(debug_body.get('messages', []))}, tools_count={len(debug_body.get('tools', []))}")
-                    # Save full request for debugging
-                    import os
+                    logger.info(
+                        f"📤 Sending to Cerebras: model={debug_body.get('model')}, "
+                        f"messages_count={len(debug_body.get('messages', []))}, "
+                        f"tools_count={len(debug_body.get('tools', []))}"
+                    )
                     os.makedirs("/tmp/codex_plus/cerebras_debug", exist_ok=True)
                     with open("/tmp/codex_plus/cerebras_debug/last_request.json", "w") as f:
                         json.dump(debug_body, f, indent=2)
-                    logger.info("📝 Saved full request to /tmp/codex_plus/cerebras_debug/last_request.json")
+                    logger.info(
+                        "📝 Saved full request to /tmp/codex_plus/cerebras_debug/last_request.json"
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to log debug info: {e}")
-                # Thread-safe httpx client creation with double-checked locking pattern
-                if not hasattr(self, '_httpx_client'):
-                    with self._httpx_client_init_lock:
-                        # Double-check pattern: verify client still doesn't exist after acquiring lock
-                        if not hasattr(self, '_httpx_client'):
-                            self._httpx_client = httpx.Client(timeout=30.0)
-                httpx_client = self._httpx_client
 
-                # Parse JSON body for proper httpx.post() usage
-                try:
-                    json_body = json.loads(body) if body else {}
-                except Exception as e:
-                    logger.error(f"Failed to parse body as JSON: {e}")
-                    json_body = {}
-                # Use ONLY minimal headers (Authorization + Content-Type)
-                # This matches what works in direct API calls
-                # Forwarding all headers from original request triggers Cloudflare WAF
                 minimal_headers = {
-                    "Authorization": clean_headers.get("Authorization", ""),
-                    "Content-Type": "application/json"
+                    "Content-Type": clean_headers.get("Content-Type")
+                    or clean_headers.get("content-type")
+                    or "application/json"
                 }
-                # Make request using httpx with json= parameter (NOT content=)
-                # This ensures proper Content-Type and encoding
-                request_obj = httpx_client.build_request(
-                    "POST",
-                    target_url,
-                    headers=minimal_headers,
-                    json=json_body
-                )
-                response = httpx_client.send(request_obj, stream=True)
-                # Log error responses for debugging
-                if response.status_code >= 400:
-                    try:
-                        error_text = response.read().decode('utf-8')
-                        logger.error(f"❌ Cerebras error ({response.status_code}): {error_text[:500]}")
-                        # Save error for debugging
-                        import os
-                        with open("/tmp/codex_plus/cerebras_debug/last_error.txt", "w") as f:
-                            f.write(f"Status: {response.status_code}\n\n{error_text}")
-                        # Need to recreate response since we read the body
-                        response = httpx_client.send(
-                            httpx.Request(
-                                request.method,
-                                target_url,
-                                headers=clean_headers,
-                                content=body if body else None
-                            ),
-                            stream=True
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to log error: {e}")
-                # Convert httpx response to compatible format
-                # Use iter_bytes directly as iter_content (don't wrap in lambda to avoid creating new iterator)
-                response.iter_content = response.iter_bytes
-                # Mark as httpx response (but don't close persistent client)
-                response._is_httpx = True
+                if "Authorization" in clean_headers:
+                    minimal_headers["Authorization"] = clean_headers["Authorization"]
+
+                try:
+                    response_ctx = httpx.stream(
+                        request.method,
+                        target_url,
+                        headers=minimal_headers,
+                        content=body if body else None,
+                        timeout=30.0
+                    )
+                    response = response_ctx.__enter__()
+                    response.iter_content = response.iter_bytes
+                    response._is_httpx = True
+                    response._close_cm = response_ctx.__exit__
+                except Exception as e:
+                    logger.error(f"Failed to initiate Cerebras request: {e}")
+                    return JSONResponse({"error": str(e)}, status_code=500)
             else:
                 # 🔒 CHATGPT PATH: Use curl_cffi with Chrome impersonation (REQUIRED for Cloudflare bypass)
                 logger.info("🔒 Using curl_cffi for ChatGPT upstream")
@@ -496,7 +477,6 @@ BEGIN EXECUTION NOW:
                     with self._session_init_lock:
                         # Double-check pattern: verify session still doesn't exist after acquiring lock
                         if not hasattr(self, '_session'):
-                            from curl_cffi import requests
                             self._session = requests.Session(impersonate="chrome124")
                 session = self._session
 
@@ -535,7 +515,6 @@ BEGIN EXECUTION NOW:
                     # Initialize response log file for ChatGPT responses
                     if not is_cerebras:
                         try:
-                            import os
                             log_dir = Path("/tmp/codex_plus/chatgpt_responses")
                             log_dir.mkdir(parents=True, exist_ok=True)
                             # Clear previous response
@@ -682,7 +661,6 @@ BEGIN EXECUTION NOW:
                                 # ChatGPT path - log and pass through
                                 # Save chunks to file for analysis
                                 try:
-                                    import os
                                     log_dir = Path("/tmp/codex_plus/chatgpt_responses")
                                     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -713,6 +691,11 @@ BEGIN EXECUTION NOW:
                             response.close()
                             # Note: httpx client is persistent - do not close it
                         except:
+                            pass
+                    if hasattr(response, "_close_cm"):
+                        try:
+                            response._close_cm(None, None, None)
+                        except Exception:
                             pass
             
             # Get response headers - ONLY forward essential SSE headers
