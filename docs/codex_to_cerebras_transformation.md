@@ -279,8 +279,8 @@ Output (OpenAI):
 
 ```python
 MODEL_MAPPING = {
-    "gpt-5-codex": "llama-3.3-70b",  # Default Cerebras model
-    "gpt-4-codex": "llama-3.1-70b",
+    "gpt-5-codex": "gpt-oss-120b",  # Default Cerebras-compatible model
+    "gpt-4-codex": "gpt-oss-120b",
     # Add more mappings as needed
 }
 
@@ -294,7 +294,7 @@ def transform_model_name(codex_model):
     Returns:
         Cerebras model identifier
     """
-    return MODEL_MAPPING.get(codex_model, "llama-3.3-70b")
+    return MODEL_MAPPING.get(codex_model, "gpt-oss-120b")
 ```
 
 ### 3.4 Top-Level Fields
@@ -414,7 +414,7 @@ Both formats are largely compatible for non-streaming responses:
 Both use Server-Sent Events (SSE) format:
 
 **OpenAI Stream Chunk**:
-```
+```text
 data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"llama-3.3-70b","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}
 
 data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"llama-3.3-70b","choices":[{"index":0,"delta":{"content":"!"},"finish_reason":null}]}
@@ -566,11 +566,11 @@ class CodexToCerebrasTransformer:
     """Transforms Codex CLI requests to Cerebras/OpenAI format."""
 
     MODEL_MAPPING = {
-        "gpt-5-codex": "llama-3.3-70b",
-        "gpt-4-codex": "llama-3.1-70b",
+        "gpt-5-codex": "gpt-oss-120b",
+        "gpt-4-codex": "gpt-oss-120b",
     }
 
-    def __init__(self, default_model: str = "llama-3.3-70b"):
+    def __init__(self, default_model: str = "gpt-oss-120b"):
         self.default_model = default_model
 
     def transform_request(self, codex_request: Dict[str, Any]) -> Dict[str, Any]:

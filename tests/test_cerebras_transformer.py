@@ -3,9 +3,11 @@ TDD Tests for Codex to Cerebras Request Transformer
 
 These tests should FAIL initially (Red phase), then pass after implementation (Green phase).
 """
-import pytest
+import os
 import json
 from pathlib import Path
+
+import pytest
 
 
 # Import the transformer (will fail until implemented)
@@ -17,31 +19,31 @@ except ImportError:
 
 @pytest.fixture
 def sample_codex_request():
-    """Load real Codex request from captured payload"""
-    request_file = Path("/tmp/codex_plus/cereb_conversion/request_payload.json")
-    if request_file.exists():
-        with open(request_file, 'r') as f:
-            return json.load(f)
-    # Minimal fallback if file doesn't exist
-    return {
-        "model": "gpt-5-codex",
-        "instructions": "You are a helpful assistant.",
-        "input": [{
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": "Hello"}]
-        }],
-        "tools": [{
-            "type": "function",
-            "name": "test_tool",
-            "description": "A test tool",
-            "strict": False,
-            "parameters": {"type": "object", "properties": {}}
-        }],
-        "reasoning": {"effort": "high"},
-        "store": False,
-        "stream": True
-    }
+    """Load a Codex request from disk or fall back to a local sample."""
+
+    def _load_json(candidate: Path):
+        if candidate.exists():
+            with open(candidate, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+        return None
+
+    candidates = []
+
+    env_override = os.getenv("CODEX_REQUEST_FILE")
+    if env_override:
+        candidates.append(Path(env_override))
+
+    candidates.append(Path("/tmp/codex_plus/cereb_conversion/request_payload.json"))
+    candidates.append(Path(__file__).parent / "data" / "sample_codex_request.json")
+
+    for path in candidates:
+        payload = _load_json(path)
+        if payload is not None:
+            return payload
+
+    pytest.skip(
+        "No sample Codex request found - set CODEX_REQUEST_FILE or ensure tests/data/sample_codex_request.json exists"
+    )
 
 
 @pytest.fixture
@@ -112,6 +114,54 @@ class TestMessageTransformation:
         # Result messages should not have "type" field
         for msg in result["messages"]:
             assert "type" not in msg
+
+    def test_tool_calls_preserved_on_assistant_messages(self, transformer):
+        """Assistant tool calls should be forwarded intact."""
+        tool_call = {
+            "id": "call_123",
+            "type": "function",
+            "function": {"name": "lookup", "arguments": "{}"},
+        }
+        codex_request = {
+            "model": "gpt-5-codex",
+            "instructions": "System",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "tool_calls": [tool_call],
+                    "content": [],
+                }
+            ],
+        }
+
+        result = transformer.transform_request(codex_request)
+
+        assistant_msg = result["messages"][1]
+        assert assistant_msg["tool_calls"] == [tool_call]
+        assert assistant_msg["content"] is None
+
+    def test_tool_response_entries_preserved(self, transformer):
+        """Tool output entries should remain in the transcript."""
+        codex_request = {
+            "model": "gpt-5-codex",
+            "instructions": "System",
+            "input": [
+                {
+                    "type": "tool",
+                    "role": "tool",
+                    "tool_call_id": "call_0",
+                    "content": "{\"result\": 42}",
+                }
+            ],
+        }
+
+        result = transformer.transform_request(codex_request)
+
+        tool_msg = result["messages"][1]
+        assert tool_msg["role"] == "tool"
+        assert tool_msg["tool_call_id"] == "call_0"
+        assert tool_msg["content"] == "{\"result\": 42}"
 
 
 class TestToolTransformation:
@@ -235,10 +285,8 @@ class TestModelMapping:
 
         result = transformer.transform_request(codex_request)
 
-        # Should be mapped to a Cerebras model
-        assert result["model"] != "gpt-5-codex"
-        # Check that it's a valid Cerebras model name
-        assert "llama" in result["model"].lower() or "qwen" in result["model"].lower()
+        # Should be mapped to a Cerebras model configured by the transformer
+        assert result["model"] == transformer.default_model
 
 
 class TestEdgeCases:

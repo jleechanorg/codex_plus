@@ -8,6 +8,8 @@ Cerebras format.
 
 import logging
 from typing import Dict, Any, Tuple
+from urllib.parse import urlparse
+
 from .cerebras_transformer import CodexToCerebrasTransformer
 
 logger = logging.getLogger("codex_plus.cerebras_middleware")
@@ -22,7 +24,10 @@ class CerebrasMiddleware:
 
     def is_cerebras_upstream(self, upstream_url: str) -> bool:
         """Check if upstream URL is Cerebras API"""
-        return "api.cerebras.ai" in upstream_url
+        try:
+            return urlparse(upstream_url).hostname == "api.cerebras.ai"
+        except Exception:
+            return False
 
     def process_request(
         self,

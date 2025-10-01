@@ -40,6 +40,7 @@ import sys
 import os
 import time
 import re
+from pathlib import Path
 from urllib.parse import urlparse
 from .status_line_middleware import HookMiddleware
 
@@ -81,17 +82,34 @@ if not logger.handlers:
 # CRITICAL: This URL MUST remain exactly as specified for Codex to work
 # Support dynamic upstream based on provider mode (Cerebras or ChatGPT)
 def _get_upstream_url() -> str:
-    """Get upstream URL from environment variable or default to ChatGPT
+    """Resolve the upstream URL with validation and fallback logic."""
 
-    This is called at request time (not import time) to allow dynamic configuration
-    """
     default_url = "https://chatgpt.com/backend-api/codex"
 
-    # Check environment variable first
     env_url = os.getenv("CODEX_PLUS_UPSTREAM_URL")
     if env_url:
-        logger.debug(f"📡 Using upstream URL from environment: {env_url}")
-        return env_url
+        if _validate_upstream_url(env_url):
+            logger.debug(f"📡 Using upstream URL from environment: {env_url}")
+            return env_url
+        logger.warning("⚠️ Invalid CODEX_PLUS_UPSTREAM_URL provided; falling back to defaults")
+
+    provider_file_path = os.environ.get(
+        "CODEXPLUS_PROVIDER_BASE_URL_FILE",
+        "/tmp/codex_plus/provider.base_url",
+    )
+
+    try:
+        candidate_path = Path(provider_file_path)
+        if candidate_path.exists():
+            file_url = candidate_path.read_text(encoding="utf-8").strip()
+            if file_url and _validate_upstream_url(file_url):
+                logger.debug(f"📡 Using upstream URL from {candidate_path}: {file_url}")
+                return file_url
+            logger.warning(
+                "⚠️ Provider base URL file contained invalid URL; ignoring",
+            )
+    except Exception as exc:
+        logger.warning(f"⚠️ Failed to read provider base URL file: {exc}")
 
     logger.debug(f"📡 Using default upstream URL: {default_url}")
     return default_url

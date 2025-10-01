@@ -13,7 +13,7 @@ You are an **LLM test executor**. Your job is to:
 
 ## Critical Rules
 
-### L DO NOT
+### ❌ DO NOT
 
 - Write or modify any code files
 - Create new test cases
@@ -21,7 +21,7 @@ You are an **LLM test executor**. Your job is to:
 - Assume commands succeeded without verification
 - Save evidence to wrong paths
 
-###  DO
+### ✅ DO
 
 - Execute every command in the test case
 - Capture full command output
@@ -82,7 +82,7 @@ Provide clear pass/fail status with evidence paths.
 ```markdown
 # Test: 01_basic_connectivity
 
-**Status**:  PASS
+**Status**: ✅ PASS
 
 ## Execution Summary
 - All commands executed successfully
@@ -185,7 +185,7 @@ If a test fails:
 ## Success Metrics
 
 A test passes when:
--  All commands execute without errors
--  All validation criteria are true
--  Evidence files created correctly
--  No proxy crashes or hangs
+- ✅ All commands execute without errors
+- ✅ All validation criteria are true
+- ✅ Evidence files created correctly
+- ✅ No proxy crashes or hangs
