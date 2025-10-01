@@ -4,7 +4,9 @@
 
 **Streaming:** ✅ WORKING - No more "stream closed before response.completed" errors
 
-**Tool Calling:** ⚠️ NOT WORKING - Events sent but not executed by Codex CLI
+**Text Output:** ✅ WORKING - Text responses display correctly using `response.output_text.delta`
+
+**Tool Calling:** 🔄 IN PROGRESS - Implemented function_call item type, pending test
 
 ## What's Working
 
@@ -24,7 +26,37 @@
    - Cerebras SSE → ChatGPT SSE
    - Authentication and streaming working
 
-## Format Attempts
+## Latest Implementation (2025-10-01)
+
+### Attempt 3: Function Call Item Type
+
+**Key Discovery:** The `response.output_item.added` event needs different `item` structure for function calls vs messages.
+
+```json
+// For function calls
+{
+  "type": "response.output_item.added",
+  "item": {
+    "id": "call_61cd290ca",
+    "type": "function_call",  // NOT "message"
+    "name": "shell",          // Function name from tool_call
+    "call_id": "call_61cd290ca",
+    "arguments": ""
+  }
+}
+
+// Then stream arguments
+{
+  "type": "response.function_call.arguments.delta",
+  "delta": "{\"command\":"
+}
+```
+
+**Status:** ⏰ BLOCKED - Cannot test due to ChatGPT usage limit (resets in ~4 hours)
+
+**Implementation:** `src/codex_plus/llm_execution_middleware.py` lines 602-633
+
+## Previous Format Attempts
 
 ### Attempt 1: `function_call_delta`
 ```json

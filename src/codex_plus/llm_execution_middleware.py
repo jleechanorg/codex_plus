@@ -599,82 +599,67 @@ BEGIN EXECUTION NOW:
                                                         yield f'data: {json.dumps(created)}\n\n'.encode('utf-8')
                                                         logger.info(f"📝 Sent response.created event")
 
-                                                        added = {
-                                                            "type": "response.output_item.added",
-                                                            "item": {
-                                                                "id": "item_0",
-                                                                "type": "message",
-                                                                "role": "assistant",
-                                                                "content": []
+                                                        # Determine item type based on delta content
+                                                        if delta.get('tool_calls'):
+                                                            # Extract function name and id from first tool call
+                                                            tool_call = delta['tool_calls'][0]
+                                                            function_name = tool_call.get('function', {}).get('name', 'unknown')
+                                                            call_id = tool_call.get('id', 'call_0')
+
+                                                            added = {
+                                                                "type": "response.output_item.added",
+                                                                "item": {
+                                                                    "id": call_id,
+                                                                    "type": "function_call",
+                                                                    "name": function_name,
+                                                                    "call_id": call_id,
+                                                                    "arguments": ""
+                                                                }
                                                             }
-                                                        }
+                                                            logger.info(f"📞 Sending function_call item: {function_name}")
+                                                        else:
+                                                            added = {
+                                                                "type": "response.output_item.added",
+                                                                "item": {
+                                                                    "id": "item_0",
+                                                                    "type": "message",
+                                                                    "role": "assistant",
+                                                                    "content": []
+                                                                }
+                                                            }
+                                                            logger.info(f"📝 Sending message item")
+
                                                         yield f'data: {json.dumps(added)}\n\n'.encode('utf-8')
-                                                        logger.info(f"📝 Sent response.output_item.added event")
                                                         sent_initial_events = True
 
                                                     if 'content' in delta and delta['content']:
                                                         # Transform content delta to ChatGPT format
+                                                        # Research shows: use response.output_text.delta with flat delta field
                                                         transformed = {
-                                                            "type": "response.output_item.delta",
-                                                            "item_id": "item_0",
-                                                            "output_index": 0,
-                                                            "content_index": 0,
-                                                            "delta": {
-                                                                "type": "text_delta",
-                                                                "text": delta['content']
-                                                            }
+                                                            "type": "response.output_text.delta",
+                                                            "delta": delta['content']  # Flat string, not nested!
                                                         }
                                                         output = f'data: {json.dumps(transformed)}\n\n'.encode('utf-8')
                                                         logger.info(f"✨ Sending content delta: {json.dumps(transformed)[:150]}")
                                                         yield output
 
                                                     elif 'tool_calls' in delta and delta['tool_calls']:
-                                                        # Transform tool call deltas to content_block style
-                                                        # Try Claude API format which Codex CLI might expect
+                                                        # Transform tool call deltas to OpenAI Responses API format
+                                                        # Research shows: use response.function_call.arguments.delta
                                                         for tool_call in delta['tool_calls']:
                                                             function_data = tool_call.get('function', {})
 
-                                                            # First delta with tool call includes name and id
-                                                            if function_data.get('name'):
-                                                                # Send content_block_start for tool use
-                                                                block_start = {
-                                                                    "type": "content_block_start",
-                                                                    "index": tool_call.get('index', 0),
-                                                                    "content_block": {
-                                                                        "type": "tool_use",
-                                                                        "id": tool_call.get('id', f"toolu_{tool_call.get('index', 0)}"),
-                                                                        "name": function_data['name']
-                                                                    }
-                                                                }
-                                                                output = f'data: {json.dumps(block_start)}\n\n'.encode('utf-8')
-                                                                logger.info(f"🔧 Sending content_block_start: {json.dumps(block_start)[:150]}")
-                                                                yield output
-
-                                                            # Send input_json_delta with arguments
-                                                            if 'arguments' in function_data:
+                                                            # Send function arguments as they stream
+                                                            if 'arguments' in function_data and function_data['arguments']:
                                                                 tool_delta = {
-                                                                    "type": "content_block_delta",
-                                                                    "index": tool_call.get('index', 0),
-                                                                    "delta": {
-                                                                        "type": "input_json_delta",
-                                                                        "partial_json": function_data['arguments']
-                                                                    }
+                                                                    "type": "response.function_call.arguments.delta",
+                                                                    "delta": function_data['arguments']  # Flat string!
                                                                 }
                                                                 output = f'data: {json.dumps(tool_delta)}\n\n'.encode('utf-8')
-                                                                logger.info(f"🔧 Sending content_block_delta: {json.dumps(tool_delta)[:150]}")
+                                                                logger.info(f"🔧 Sending function_call.arguments.delta: {json.dumps(tool_delta)[:150]}")
                                                                 yield output
 
                                                     elif choices[0].get('finish_reason'):
-                                                        # If finish_reason is tool_calls, send content_block_stop first
-                                                        if choices[0].get('finish_reason') == 'tool_calls':
-                                                            block_stop = {
-                                                                "type": "content_block_stop",
-                                                                "index": 0
-                                                            }
-                                                            output = f'data: {json.dumps(block_stop)}\n\n'.encode('utf-8')
-                                                            logger.info(f"🔧 Sending content_block_stop")
-                                                            yield output
-
                                                         # Send completion event with response ID
                                                         completion = {
                                                             "type": "response.completed",
