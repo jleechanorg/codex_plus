@@ -36,7 +36,6 @@ RUNTIME_DIR="/tmp/codex_plus"
 PID_FILE="$RUNTIME_DIR/proxy.pid"
 LOG_FILE="$RUNTIME_DIR/proxy.log"
 LOCK_FILE="$RUNTIME_DIR/proxy.lock"
-BASE_URL_FILE="$RUNTIME_DIR/provider.base_url"
 # Autostart configuration
 AUTOSTART_LABEL="com.codex.plus.proxy"
 LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
@@ -124,28 +123,25 @@ configure_provider_environment() {
         fi
 
         export CODEX_PLUS_PROVIDER_MODE="cerebras"
+        export CODEX_PLUS_UPSTREAM_URL="$CEREBRAS_BASE_URL"
         export OPENAI_API_KEY="$CEREBRAS_API_KEY"
         export OPENAI_BASE_URL="$CEREBRAS_BASE_URL"
         export OPENAI_MODEL="$CEREBRAS_MODEL"
-        printf '%s\n' "$CEREBRAS_BASE_URL" > "$BASE_URL_FILE"
         echo -e "${BLUE}🌐 Cerebras mode enabled - proxy will use Cerebras credentials${NC}"
     else
         export CODEX_PLUS_PROVIDER_MODE="openai"
-        printf '%s\n' "$DEFAULT_UPSTREAM_URL" > "$BASE_URL_FILE"
+        export CODEX_PLUS_UPSTREAM_URL="$DEFAULT_UPSTREAM_URL"
     fi
     echo "$PROVIDER_MODE" > "$RUNTIME_DIR/provider.mode"
 }
 
 get_upstream_url() {
-    if [ -f "$BASE_URL_FILE" ]; then
-        local upstream
-        read -r upstream < "$BASE_URL_FILE" 2>/dev/null || upstream=""
-        if [ -n "$upstream" ]; then
-            printf '%s' "$upstream"
-            return
-        fi
+    # Read from environment variable set by setup_provider_env
+    if [ -n "$CODEX_PLUS_UPSTREAM_URL" ]; then
+        printf '%s' "$CODEX_PLUS_UPSTREAM_URL"
+    else
+        printf '%s' "$DEFAULT_UPSTREAM_URL"
     fi
-    printf '%s' "$DEFAULT_UPSTREAM_URL"
 }
 
 validate_pid() {

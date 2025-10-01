@@ -81,19 +81,14 @@ if not logger.handlers:
 # CRITICAL: This URL MUST remain exactly as specified for Codex to work
 # Support dynamic upstream based on provider mode (Cerebras or ChatGPT)
 def _get_upstream_url() -> str:
-    """Get upstream URL from provider configuration or default to ChatGPT"""
-    provider_base_url_file = "/tmp/codex_plus/provider.base_url"
+    """Get upstream URL from environment variable or default to ChatGPT"""
     default_url = "https://chatgpt.com/backend-api/codex"
 
-    try:
-        if os.path.exists(provider_base_url_file):
-            with open(provider_base_url_file, 'r') as f:
-                url = f.read().strip()
-                if url:
-                    logger.info(f"📡 Using upstream URL from provider config: {url}")
-                    return url
-    except Exception as e:
-        logger.warning(f"Failed to read provider base URL: {e}")
+    # Check environment variable first
+    env_url = os.getenv("CODEX_PLUS_UPSTREAM_URL")
+    if env_url:
+        logger.info(f"📡 Using upstream URL from environment: {env_url}")
+        return env_url
 
     logger.info(f"📡 Using default upstream URL: {default_url}")
     return default_url
