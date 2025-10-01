@@ -531,6 +531,19 @@ BEGIN EXECUTION NOW:
                     # 🔒 PROTECTED: Core streaming iteration - DO NOT MODIFY
                     logger.info(f"🔄 Starting iteration over response.iter_content")
                     chunk_count = 0
+
+                    # Initialize response log file for ChatGPT responses
+                    if not is_cerebras:
+                        try:
+                            import os
+                            log_dir = Path("/tmp/codex_plus/chatgpt_responses")
+                            log_dir.mkdir(parents=True, exist_ok=True)
+                            # Clear previous response
+                            (log_dir / "latest_response.txt").write_bytes(b"")
+                            logger.info(f"📝 Initialized response log at /tmp/codex_plus/chatgpt_responses/latest_response.txt")
+                        except Exception as e:
+                            logger.warning(f"Failed to initialize response log: {e}")
+
                     for chunk in response.iter_content(chunk_size=None):
                         chunk_count += 1
                         logger.info(f"📦 Received chunk #{chunk_count}, size={len(chunk) if chunk else 0}")
@@ -681,7 +694,21 @@ BEGIN EXECUTION NOW:
                                                 logger.warning(f"Failed to parse SSE chunk: {data_str[:100]}")
                                                 continue
                             else:
-                                # ChatGPT path - pass through as-is
+                                # ChatGPT path - log and pass through
+                                # Save chunks to file for analysis
+                                try:
+                                    import os
+                                    log_dir = Path("/tmp/codex_plus/chatgpt_responses")
+                                    log_dir.mkdir(parents=True, exist_ok=True)
+
+                                    # Append to response log
+                                    with open(log_dir / "latest_response.txt", "ab") as f:
+                                        f.write(chunk)
+
+                                    logger.info(f"📝 Logged {len(chunk)} bytes to chatgpt_responses/latest_response.txt")
+                                except Exception as e:
+                                    logger.warning(f"Failed to log response chunk: {e}")
+
                                 yield chunk
                 except Exception as e:
                     logger.error(f"Error during streaming: {e}")
