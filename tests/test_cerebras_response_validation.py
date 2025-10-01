@@ -1,22 +1,40 @@
-"""
-Validation test for Cerebras response format compatibility with Codex CLI
+"""Validation tests for Cerebras response compatibility."""
 
-This test validates that Cerebras API responses are compatible with what Codex CLI expects.
-CRITICAL: Run this BEFORE implementing the full transformer.
-"""
-import pytest
 import json
 import os
 from pathlib import Path
 
+import pytest
+
+
+INTEGRATION_ENABLED = os.getenv("CEREBRAS_INTEGRATION") == "1"
+NO_NETWORK = os.getenv("NO_NETWORK") == "1"
+
+pytestmark = pytest.mark.skipif(
+    (not INTEGRATION_ENABLED) or NO_NETWORK,
+    reason="Cerebras integration tests require CEREBRAS_INTEGRATION=1 and network access",
+)
+
 
 def load_sample_codex_request():
-    """Load the real Codex request we captured"""
-    request_file = Path("/tmp/codex_plus/cereb_conversion/request_payload.json")
-    if request_file.exists():
-        with open(request_file, 'r') as f:
-            return json.load(f)
-    pytest.skip("No sample Codex request found - run Codex CLI first to capture")
+    """Load a captured Codex request from configurable paths."""
+
+    candidates = []
+    env_override = os.getenv("CODEX_REQUEST_FILE")
+    if env_override:
+        candidates.append(Path(env_override))
+
+    candidates.append(Path("/tmp/codex_plus/cereb_conversion/request_payload.json"))
+    candidates.append(Path(__file__).parent / "data" / "sample_codex_request.json")
+
+    for candidate in candidates:
+        if candidate.exists():
+            with open(candidate, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+
+    pytest.skip(
+        "No sample Codex request found - set CODEX_REQUEST_FILE or run capture workflow"
+    )
 
 
 def test_cerebras_api_reachable():

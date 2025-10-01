@@ -13,7 +13,7 @@ Codex-Plus proxy currently forwards requests directly to upstream, but Codex CLI
 
 ### High-Level Design
 
-```
+```text
 Codex CLI → Proxy → [Format Transformer] → Cerebras API
                          ↓
               - Endpoint mapping

@@ -1,35 +1,25 @@
-"""
-Test Cerebras provider routing functionality
-"""
-import pytest
-import tempfile
+"""Tests for Cerebras provider routing helpers."""
+
 import os
-from unittest.mock import patch, MagicMock
+import tempfile
+from unittest.mock import patch
+
+import pytest
 
 
 def test_cerebras_upstream_url_from_file():
-    """Test that proxy reads Cerebras URL from provider.base_url file"""
-    # Create temporary provider.base_url file
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.base_url') as f:
-        f.write("https://api.cerebras.ai/v1")
-        temp_file = f.name
+    """_get_upstream_url should read a provider file when present."""
+    from codex_plus.main_sync_cffi import _get_upstream_url
+
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".base_url") as handle:
+        handle.write("https://api.cerebras.ai/v1")
+        provider_path = handle.name
 
     try:
-        # Patch the file path to use our temp file
-        with patch('codex_plus.main_sync_cffi._get_upstream_url') as mock_get_url:
-            # Simulate reading from the file
-            with open(temp_file, 'r') as f:
-                cerebras_url = f.read().strip()
-            mock_get_url.return_value = cerebras_url
-
-            # Import after patching
-            from codex_plus.main_sync_cffi import _get_upstream_url
-
-            # Test that we get the Cerebras URL
-            result = mock_get_url()
-            assert result == "https://api.cerebras.ai/v1", f"Expected Cerebras URL, got {result}"
+        with patch.dict(os.environ, {"CODEXPLUS_PROVIDER_BASE_URL_FILE": provider_path}, clear=False):
+            assert _get_upstream_url() == "https://api.cerebras.ai/v1"
     finally:
-        os.unlink(temp_file)
+        os.unlink(provider_path)
 
 
 def test_cerebras_url_validation():
@@ -54,13 +44,19 @@ def test_cerebras_url_validation():
 
 
 def test_default_to_chatgpt_when_no_file():
-    """Test that proxy defaults to ChatGPT when provider.base_url doesn't exist"""
-    with patch('os.path.exists', return_value=False):
-        from codex_plus.main_sync_cffi import _get_upstream_url
+    """Fallback to ChatGPT URL if no overrides are configured."""
+    from codex_plus.main_sync_cffi import _get_upstream_url
 
+    with patch.dict(
+        os.environ,
+        {
+            "CODEXPLUS_PROVIDER_BASE_URL_FILE": "/non-existent-path/base_url",
+            "CODEX_PLUS_UPSTREAM_URL": "",
+        },
+        clear=False,
+    ):
         url = _get_upstream_url()
-        assert url == "https://chatgpt.com/backend-api/codex", \
-            "Should default to ChatGPT URL when file doesn't exist"
+        assert url == "https://chatgpt.com/backend-api/codex"
 
 
 if __name__ == "__main__":

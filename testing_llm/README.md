@@ -13,7 +13,7 @@ Validate Cerebras proxy end-to-end through **real LLM execution**:
 
 ## Directory Structure
 
-```
+```text
 testing_llm/
 ├── README.md                   # This file
 ├── CLAUDE.md                   # LLM execution instructions
@@ -23,7 +23,7 @@ testing_llm/
 ├── 03_streaming_response.md    # Medium: Streaming validation
 ├── 04_tool_calling.md          # Medium: Function calling test
 └── evidence/                   # Test evidence (gitignored)
-```
+```text
 
 ## Evidence Path
 

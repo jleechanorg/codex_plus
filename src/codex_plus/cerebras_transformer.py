@@ -176,26 +176,33 @@ class CodexToCerebrasTransformer:
 
         # 2. Transform each input message
         for input_msg in input_array:
-            # Remove "type": "message" wrapper
-            if input_msg.get("type") == "message":
-                transformed_msg = {
-                    "role": input_msg["role"]
-                }
+            msg_type = input_msg.get("type", "message")
+            role = input_msg.get("role", "user")
+            transformed_msg: Dict[str, Any] = {"role": role}
 
-                # Flatten content array to string
-                content = self._extract_content(input_msg.get("content", []))
-                if content:
-                    transformed_msg["content"] = content
+            content_value = input_msg.get("content")
+            if isinstance(content_value, list):
+                content = self._extract_content(content_value)
+            else:
+                content = content_value
 
-                # Handle tool call responses if present
-                if "tool_call_id" in input_msg:
-                    transformed_msg["tool_call_id"] = input_msg["tool_call_id"]
+            if content is not None:
+                transformed_msg["content"] = content
+            elif "content" in input_msg or msg_type in {"message", "tool"}:
+                transformed_msg["content"] = None
 
-                messages.append(transformed_msg)
+            if "tool_calls" in input_msg:
+                transformed_msg["tool_calls"] = input_msg["tool_calls"]
+
+            tool_call_id = input_msg.get("tool_call_id")
+            if tool_call_id:
+                transformed_msg["tool_call_id"] = tool_call_id
+
+            messages.append(transformed_msg)
 
         return messages
 
-    def _extract_content(self, content_array: List[Dict]) -> str:
+    def _extract_content(self, content_array: List[Dict]) -> Optional[str]:
         """
         Extract text content from Codex content array.
 
@@ -211,7 +218,7 @@ class CodexToCerebrasTransformer:
         Returns:
             Concatenated text content
         """
-        text_parts = []
+        text_parts: List[str] = []
 
         for content_item in content_array:
             if content_item.get("type") == "input_text":
@@ -221,7 +228,10 @@ class CodexToCerebrasTransformer:
             # Ignore other types (image, etc.) for now
             # TODO: Handle multimodal content if Cerebras supports it
 
-        return "\n\n".join(text_parts)
+        if not text_parts:
+            return None
+
+        return "\n".join(text_parts)
 
     def _transform_tools(self, codex_tools: List[Dict]) -> List[Dict]:
         """

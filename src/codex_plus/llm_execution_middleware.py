@@ -31,12 +31,14 @@ enables Codex to bypass Cloudflare and communicate with ChatGPT backend.
 
 Breaking these rules WILL break all Codex functionality.
 """
+import asyncio
 import json
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 import re
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from .cerebras_middleware import CerebrasMiddleware
 import httpx
 
@@ -71,7 +73,10 @@ class LLMExecutionMiddleware:
 
     def _is_cerebras_upstream(self, url: str) -> bool:
         """Check if URL is Cerebras API endpoint"""
-        return "api.cerebras.ai" in url
+        try:
+            return urlparse(url).hostname == "api.cerebras.ai"
+        except Exception:
+            return False
         
     def _find_claude_dir(self) -> Optional[Path]:
         """Find .claude directory in project hierarchy"""
@@ -314,14 +319,21 @@ BEGIN EXECUTION NOW:
     
     async def process_request(self, request, path: str):
         """Process request with execution behavior injection"""
-        from fastapi.responses import StreamingResponse
         from curl_cffi import requests
 
         # Store request for status line access
         self.current_request = request
 
-        # Log request headers for debugging
-        logger.info(f"📨 Request headers: {dict(request.headers)}")
+        # Log request headers for debugging without leaking secrets
+        headers = dict(request.headers)
+        redacted_headers = {}
+        sensitive_tokens = {"authorization", "cookie", "set-cookie", "token"}
+        for key, value in headers.items():
+            if any(token in key.lower() for token in sensitive_tokens):
+                redacted_headers[key] = "<REDACTED>"
+            else:
+                redacted_headers[key] = value
+        logger.debug("📨 Request headers received (values redacted): %s", redacted_headers)
 
         # Check if pre-input hooks modified the body
         if hasattr(request.state, 'modified_body'):
@@ -329,7 +341,9 @@ BEGIN EXECUTION NOW:
             logger.info("Using modified body from pre-input hooks")
         else:
             body = await request.body()
-        headers = dict(request.headers)
+
+        upstream_url = self.url_getter()
+        logger.info(f"📡 Using upstream URL: {upstream_url}")
 
         # Only process if we have a JSON body
         if body:
@@ -337,10 +351,6 @@ BEGIN EXECUTION NOW:
                 # Parse and potentially modify the request
                 data = json.loads(body)
                 modified_data = self.inject_execution_behavior(data)
-
-                # Get upstream URL dynamically
-                upstream_url = self.url_getter()
-                logger.info(f"📡 Using upstream URL: {upstream_url}")
 
                 # Apply Cerebras transformation if needed
                 modified_data, transformed_path = self.cerebras_middleware.process_request(
@@ -369,8 +379,6 @@ BEGIN EXECUTION NOW:
             except Exception as e:
                 logger.error(f"Error processing request: {e}")
 
-        # Forward to upstream - get URL dynamically
-        upstream_url = self.url_getter()
         target_url = f"{upstream_url}/{path.lstrip('/')}"
 
         # Validate upstream URL using security function
@@ -396,7 +404,7 @@ BEGIN EXECUTION NOW:
         clean_headers = _sanitize_headers(clean_headers)
 
         # Add Cerebras authentication if using Cerebras upstream
-        if "api.cerebras.ai" in upstream_url:
+        if self._is_cerebras_upstream(upstream_url):
             import os
             # Try CEREBRAS_API_KEY first, fallback to OPENAI_API_KEY
             cerebras_api_key = os.getenv("CEREBRAS_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -416,8 +424,10 @@ BEGIN EXECUTION NOW:
             # DUAL HTTP CLIENT LOGIC:
             # - Use curl_cffi for ChatGPT (Cloudflare bypass with Chrome impersonation)
             # - Use httpx for Cerebras (avoid Cloudflare blocking curl_cffi)
+            response_context = None
+            is_cerebras = self._is_cerebras_upstream(target_url)
 
-            if self._is_cerebras_upstream(target_url):
+            if is_cerebras:
                 # 🔧 CEREBRAS PATH: Use httpx (Cloudflare blocks curl_cffi impersonation)
                 logger.info("🌐 Using httpx for Cerebras upstream")
                 # Debug: log what we're sending
@@ -435,10 +445,9 @@ BEGIN EXECUTION NOW:
                 # Thread-safe httpx client creation with double-checked locking pattern
                 if not hasattr(self, '_httpx_client'):
                     with self._httpx_client_init_lock:
-                        # Double-check pattern: verify client still doesn't exist after acquiring lock
                         if not hasattr(self, '_httpx_client'):
-                            self._httpx_client = httpx.Client(timeout=30.0)
-                httpx_client = self._httpx_client
+                            self._httpx_client = httpx.AsyncClient(timeout=30.0)
+                httpx_client: httpx.AsyncClient = self._httpx_client
 
                 # Parse JSON body for proper httpx.post() usage
                 try:
@@ -449,45 +458,35 @@ BEGIN EXECUTION NOW:
                 # Use ONLY minimal headers (Authorization + Content-Type)
                 # This matches what works in direct API calls
                 # Forwarding all headers from original request triggers Cloudflare WAF
-                minimal_headers = {
-                    "Authorization": clean_headers.get("Authorization", ""),
-                    "Content-Type": "application/json"
-                }
-                # Make request using httpx with json= parameter (NOT content=)
-                # This ensures proper Content-Type and encoding
-                request_obj = httpx_client.build_request(
+                minimal_headers = {"Content-Type": "application/json"}
+                auth_header = clean_headers.get("Authorization")
+                if auth_header:
+                    minimal_headers["Authorization"] = auth_header
+
+                response_context = httpx_client.stream(
                     "POST",
                     target_url,
                     headers=minimal_headers,
-                    json=json_body
+                    json=json_body,
                 )
-                response = httpx_client.send(request_obj, stream=True)
-                # Log error responses for debugging
+                response = await response_context.__aenter__()
+
                 if response.status_code >= 400:
                     try:
-                        error_text = response.read().decode('utf-8')
+                        error_bytes = await response.aread()
+                        error_text = error_bytes.decode('utf-8', errors='replace')
                         logger.error(f"❌ Cerebras error ({response.status_code}): {error_text[:500]}")
-                        # Save error for debugging
                         import os
                         with open("/tmp/codex_plus/cerebras_debug/last_error.txt", "w") as f:
                             f.write(f"Status: {response.status_code}\n\n{error_text}")
-                        # Need to recreate response since we read the body
-                        response = httpx_client.send(
-                            httpx.Request(
-                                request.method,
-                                target_url,
-                                headers=clean_headers,
-                                content=body if body else None
-                            ),
-                            stream=True
+                        response = httpx.Response(
+                            status_code=response.status_code,
+                            headers=response.headers,
+                            content=error_bytes,
+                            request=response.request,
                         )
                     except Exception as e:
                         logger.warning(f"Failed to log error: {e}")
-                # Convert httpx response to compatible format
-                # Use iter_bytes directly as iter_content (don't wrap in lambda to avoid creating new iterator)
-                response.iter_content = response.iter_bytes
-                # Mark as httpx response (but don't close persistent client)
-                response._is_httpx = True
             else:
                 # 🔒 CHATGPT PATH: Use curl_cffi with Chrome impersonation (REQUIRED for Cloudflare bypass)
                 logger.info("🔒 Using curl_cffi for ChatGPT upstream")
@@ -509,13 +508,11 @@ BEGIN EXECUTION NOW:
                     stream=True,
                     timeout=30
                 )
-            
+
             # 🔒 PROTECTED: Streaming response generator - CRITICAL for real-time responses
             # Enhanced with proper resource cleanup and Cerebras SSE transformation
-            def stream_response():
+            async def stream_response():
                 response_closed = False
-                # Check if we need to transform Cerebras SSE format to ChatGPT /responses format
-                is_cerebras = "api.cerebras.ai" in upstream_url
                 logger.info(f"🔄 Stream response generator started, is_cerebras={is_cerebras}, upstream={upstream_url}")
                 logger.info(f"🔍 Response status={response.status_code}, headers={dict(response.headers)}")
 
@@ -544,7 +541,22 @@ BEGIN EXECUTION NOW:
                         except Exception as e:
                             logger.warning(f"Failed to initialize response log: {e}")
 
-                    for chunk in response.iter_content(chunk_size=None):
+                    if is_cerebras:
+                        byte_iter = response.aiter_bytes()
+                    else:
+                        iterator = response.iter_content(chunk_size=None)
+
+                    while True:
+                        if is_cerebras:
+                            try:
+                                chunk = await byte_iter.__anext__()
+                            except StopAsyncIteration:
+                                break
+                        else:
+                            chunk = await asyncio.to_thread(next, iterator, None)
+                            if chunk is None:
+                                break
+
                         chunk_count += 1
                         logger.info(f"📦 Received chunk #{chunk_count}, size={len(chunk) if chunk else 0}")
                         if chunk:
@@ -700,21 +712,30 @@ BEGIN EXECUTION NOW:
                     # Ensure response is closed on error
                     if not response_closed:
                         try:
-                            response.close()
-                            # Note: httpx client is persistent - do not close it
+                            if is_cerebras:
+                                await response.aclose()
+                            else:
+                                await asyncio.to_thread(response.close)
                             response_closed = True
-                        except:
+                        except Exception:
                             pass
                     raise
                 finally:
                     # Ensure response is always closed
                     if not response_closed:
                         try:
-                            response.close()
-                            # Note: httpx client is persistent - do not close it
-                        except:
+                            if is_cerebras:
+                                await response.aclose()
+                            else:
+                                await asyncio.to_thread(response.close)
+                        except Exception:
                             pass
-            
+                    if response_context is not None:
+                        try:
+                            await response_context.__aexit__(None, None, None)
+                        except Exception:
+                            pass
+
             # Get response headers - ONLY forward essential SSE headers
             # Strip all upstream-specific headers (Cloudflare, Cerebras, etc.)
             upstream_headers = dict(response.headers)
