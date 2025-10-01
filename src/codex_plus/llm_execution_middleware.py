@@ -616,28 +616,52 @@ BEGIN EXECUTION NOW:
                                                         yield output
 
                                                     elif 'tool_calls' in delta and delta['tool_calls']:
-                                                        # Transform tool call deltas - pass through as-is for now
-                                                        # Cerebras format matches OpenAI format for tool calls
+                                                        # Transform tool call deltas to content_block style
+                                                        # Try Claude API format which Codex CLI might expect
                                                         for tool_call in delta['tool_calls']:
-                                                            tool_delta = {
-                                                                "type": "response.output_item.delta",
-                                                                "item_id": "item_0",
-                                                                "output_index": 0,
-                                                                "delta": {
-                                                                    "type": "function_call_delta",
+                                                            function_data = tool_call.get('function', {})
+
+                                                            # First delta with tool call includes name and id
+                                                            if function_data.get('name'):
+                                                                # Send content_block_start for tool use
+                                                                block_start = {
+                                                                    "type": "content_block_start",
                                                                     "index": tool_call.get('index', 0),
-                                                                    "id": tool_call.get('id'),
-                                                                    "function": tool_call.get('function', {})
+                                                                    "content_block": {
+                                                                        "type": "tool_use",
+                                                                        "id": tool_call.get('id', f"toolu_{tool_call.get('index', 0)}"),
+                                                                        "name": function_data['name']
+                                                                    }
                                                                 }
-                                                            }
-                                                            # Remove None values
-                                                            if tool_delta['delta']['id'] is None:
-                                                                del tool_delta['delta']['id']
-                                                            output = f'data: {json.dumps(tool_delta)}\n\n'.encode('utf-8')
-                                                            logger.info(f"🔧 Sending tool call delta: {json.dumps(tool_delta)[:150]}")
-                                                            yield output
+                                                                output = f'data: {json.dumps(block_start)}\n\n'.encode('utf-8')
+                                                                logger.info(f"🔧 Sending content_block_start: {json.dumps(block_start)[:150]}")
+                                                                yield output
+
+                                                            # Send input_json_delta with arguments
+                                                            if 'arguments' in function_data:
+                                                                tool_delta = {
+                                                                    "type": "content_block_delta",
+                                                                    "index": tool_call.get('index', 0),
+                                                                    "delta": {
+                                                                        "type": "input_json_delta",
+                                                                        "partial_json": function_data['arguments']
+                                                                    }
+                                                                }
+                                                                output = f'data: {json.dumps(tool_delta)}\n\n'.encode('utf-8')
+                                                                logger.info(f"🔧 Sending content_block_delta: {json.dumps(tool_delta)[:150]}")
+                                                                yield output
 
                                                     elif choices[0].get('finish_reason'):
+                                                        # If finish_reason is tool_calls, send content_block_stop first
+                                                        if choices[0].get('finish_reason') == 'tool_calls':
+                                                            block_stop = {
+                                                                "type": "content_block_stop",
+                                                                "index": 0
+                                                            }
+                                                            output = f'data: {json.dumps(block_stop)}\n\n'.encode('utf-8')
+                                                            logger.info(f"🔧 Sending content_block_stop")
+                                                            yield output
+
                                                         # Send completion event with response ID
                                                         completion = {
                                                             "type": "response.completed",
