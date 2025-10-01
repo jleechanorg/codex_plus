@@ -333,6 +333,9 @@ start_proxy() {
     # ⚠️ This command starts the curl_cffi proxy with Cloudflare bypass ⚠️
     # ❌ FORBIDDEN: Changing module, host, port, or import structure
     # Use nohup to detach the proxy so it survives terminal closure
+    # Export provider environment variables to proxy process
+    CODEX_PLUS_UPSTREAM_URL="$CODEX_PLUS_UPSTREAM_URL" \
+    CODEX_PLUS_PROVIDER_MODE="$CODEX_PLUS_PROVIDER_MODE" \
     nohup python -c "
 import sys, os
 try:

@@ -81,20 +81,23 @@ if not logger.handlers:
 # CRITICAL: This URL MUST remain exactly as specified for Codex to work
 # Support dynamic upstream based on provider mode (Cerebras or ChatGPT)
 def _get_upstream_url() -> str:
-    """Get upstream URL from environment variable or default to ChatGPT"""
+    """Get upstream URL from environment variable or default to ChatGPT
+
+    This is called at request time (not import time) to allow dynamic configuration
+    """
     default_url = "https://chatgpt.com/backend-api/codex"
 
     # Check environment variable first
     env_url = os.getenv("CODEX_PLUS_UPSTREAM_URL")
     if env_url:
-        logger.info(f"📡 Using upstream URL from environment: {env_url}")
+        logger.debug(f"📡 Using upstream URL from environment: {env_url}")
         return env_url
 
-    logger.info(f"📡 Using default upstream URL: {default_url}")
+    logger.debug(f"📡 Using default upstream URL: {default_url}")
     return default_url
 
-UPSTREAM_URL = _get_upstream_url()
-# ⚠️ Changing this URL will break all Codex functionality ⚠️
+# ⚠️ UPSTREAM_URL is now computed per-request via _get_upstream_url() ⚠️
+# ⚠️ This allows dynamic configuration via CODEX_PLUS_UPSTREAM_URL env var ⚠️
 
 # Security validation
 def _validate_proxy_request(path: str, headers: dict) -> None:
@@ -158,7 +161,8 @@ def _validate_upstream_url(url: str) -> bool:
 logger.info("Initializing LLM execution middleware (instruction mode)")
 from .llm_execution_middleware import create_llm_execution_middleware
 # ⚠️ DO NOT MODIFY: This creates the core proxy forwarding with curl_cffi
-slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
+# Note: upstream_url is computed per-request to allow dynamic configuration
+slash_middleware = create_llm_execution_middleware(upstream_url=None, url_getter=_get_upstream_url)
 
 # ✅ SAFE TO MODIFY: Hook system imports and processing
 from .hooks import (

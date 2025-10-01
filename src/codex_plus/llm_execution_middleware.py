@@ -45,11 +45,24 @@ logger = logging.getLogger(__name__)
 class LLMExecutionMiddleware:
     """Middleware that instructs LLM to execute slash commands like Claude Code CLI"""
 
-    # Class-level lock to prevent race condition in session initialization
+    # Class-level locks to prevent race conditions in session initialization
     _session_init_lock = __import__('threading').Lock()
+    _httpx_client_init_lock = __import__('threading').Lock()
 
-    def __init__(self, upstream_url: str):
-        self.upstream_url = upstream_url
+    def __init__(self, upstream_url: Optional[str] = None, url_getter: Optional[callable] = None):
+        """Initialize middleware with either static URL or dynamic URL getter
+
+        Args:
+            upstream_url: Static upstream URL (legacy support)
+            url_getter: Callable that returns upstream URL (allows dynamic config)
+        """
+        if url_getter:
+            self.url_getter = url_getter
+        elif upstream_url:
+            self.url_getter = lambda: upstream_url
+        else:
+            raise ValueError("Must provide either upstream_url or url_getter")
+
         self.cerebras_middleware = CerebrasMiddleware()
         self.claude_dir = self._find_claude_dir()
         self.commands_dir = self.claude_dir / "commands" if self.claude_dir else None
@@ -307,6 +320,9 @@ BEGIN EXECUTION NOW:
         # Store request for status line access
         self.current_request = request
 
+        # Log request headers for debugging
+        logger.info(f"📨 Request headers: {dict(request.headers)}")
+
         # Check if pre-input hooks modified the body
         if hasattr(request.state, 'modified_body'):
             body = request.state.modified_body
@@ -322,10 +338,14 @@ BEGIN EXECUTION NOW:
                 data = json.loads(body)
                 modified_data = self.inject_execution_behavior(data)
 
+                # Get upstream URL dynamically
+                upstream_url = self.url_getter()
+                logger.info(f"📡 Using upstream URL: {upstream_url}")
+
                 # Apply Cerebras transformation if needed
                 modified_data, transformed_path = self.cerebras_middleware.process_request(
                     modified_data,
-                    self.upstream_url,
+                    upstream_url,
                     path
                 )
 
@@ -349,8 +369,9 @@ BEGIN EXECUTION NOW:
             except Exception as e:
                 logger.error(f"Error processing request: {e}")
 
-        # Forward to upstream
-        target_url = f"{self.upstream_url}/{path.lstrip('/')}"
+        # Forward to upstream - get URL dynamically
+        upstream_url = self.url_getter()
+        target_url = f"{upstream_url}/{path.lstrip('/')}"
 
         # Validate upstream URL using security function
         from .main_sync_cffi import _validate_upstream_url, _sanitize_headers
@@ -375,7 +396,7 @@ BEGIN EXECUTION NOW:
         clean_headers = _sanitize_headers(clean_headers)
 
         # Add Cerebras authentication if using Cerebras upstream
-        if "api.cerebras.ai" in self.upstream_url:
+        if "api.cerebras.ai" in upstream_url:
             import os
             # Try CEREBRAS_API_KEY first, fallback to OPENAI_API_KEY
             cerebras_api_key = os.getenv("CEREBRAS_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -411,8 +432,14 @@ BEGIN EXECUTION NOW:
                     logger.info("📝 Saved full request to /tmp/codex_plus/cerebras_debug/last_request.json")
                 except Exception as e:
                     logger.warning(f"Failed to log debug info: {e}")
-                # Use httpx for Cerebras (no Chrome impersonation needed/wanted)
-                httpx_client = httpx.Client(timeout=30.0)
+                # Thread-safe httpx client creation with double-checked locking pattern
+                if not hasattr(self, '_httpx_client'):
+                    with self._httpx_client_init_lock:
+                        # Double-check pattern: verify client still doesn't exist after acquiring lock
+                        if not hasattr(self, '_httpx_client'):
+                            self._httpx_client = httpx.Client(timeout=30.0)
+                httpx_client = self._httpx_client
+
                 # Parse JSON body for proper httpx.post() usage
                 try:
                     json_body = json.loads(body) if body else {}
@@ -457,9 +484,10 @@ BEGIN EXECUTION NOW:
                     except Exception as e:
                         logger.warning(f"Failed to log error: {e}")
                 # Convert httpx response to compatible format
-                response.iter_content = lambda chunk_size=None: response.iter_bytes()
-                # Store client for cleanup
-                response._httpx_client = httpx_client
+                # Use iter_bytes directly as iter_content (don't wrap in lambda to avoid creating new iterator)
+                response.iter_content = response.iter_bytes
+                # Mark as httpx response (but don't close persistent client)
+                response._is_httpx = True
             else:
                 # 🔒 CHATGPT PATH: Use curl_cffi with Chrome impersonation (REQUIRED for Cloudflare bypass)
                 logger.info("🔒 Using curl_cffi for ChatGPT upstream")
@@ -483,24 +511,161 @@ BEGIN EXECUTION NOW:
                 )
             
             # 🔒 PROTECTED: Streaming response generator - CRITICAL for real-time responses
-            # Enhanced with proper resource cleanup to prevent connection leaks
+            # Enhanced with proper resource cleanup and Cerebras SSE transformation
             def stream_response():
                 response_closed = False
+                # Check if we need to transform Cerebras SSE format to ChatGPT /responses format
+                is_cerebras = "api.cerebras.ai" in upstream_url
+                logger.info(f"🔄 Stream response generator started, is_cerebras={is_cerebras}, upstream={upstream_url}")
+                logger.info(f"🔍 Response status={response.status_code}, headers={dict(response.headers)}")
+
+                # Buffer for incomplete SSE chunks
+                chunk_buffer = b''
+
+                # Track if we've sent initial events for Cerebras
+                sent_initial_events = False
+                # Store response ID for consistency across events
+                response_id = None
+
                 try:
                     # 🔒 PROTECTED: Core streaming iteration - DO NOT MODIFY
+                    logger.info(f"🔄 Starting iteration over response.iter_content")
+                    chunk_count = 0
                     for chunk in response.iter_content(chunk_size=None):
+                        chunk_count += 1
+                        logger.info(f"📦 Received chunk #{chunk_count}, size={len(chunk) if chunk else 0}")
                         if chunk:
-                            # 🔒 PROTECTED: Chunk yielding - DO NOT REMOVE
-                            yield chunk
+                            if is_cerebras:
+                                # Transform Cerebras SSE format to ChatGPT /responses format
+                                chunk_buffer += chunk
+
+                                # Split on double newline (SSE event boundary)
+                                events = chunk_buffer.split(b'\n\n')
+
+                                # Keep last incomplete event in buffer
+                                chunk_buffer = events[-1]
+
+                                # Process complete events
+                                for event in events[:-1]:
+                                    if not event.strip():
+                                        continue
+
+                                    # Parse SSE event
+                                    logger.info(f"🔍 Raw Cerebras event: {event[:300]}")
+                                    lines = event.decode('utf-8', errors='ignore').strip().split('\n')
+                                    for line in lines:
+                                        if line.startswith('data: '):
+                                            data_str = line[6:]  # Remove 'data: ' prefix
+
+                                            if data_str == '[DONE]':
+                                                # Send completion event
+                                                completion = {
+                                                    "type": "response.completed",
+                                                    "response": {"status": "completed"}
+                                                }
+                                                yield f'data: {json.dumps(completion)}\n\n'.encode('utf-8')
+                                                continue
+
+                                            try:
+                                                chunk_data = json.loads(data_str)
+                                                choices = chunk_data.get('choices', [])
+
+                                                if choices:
+                                                    delta = choices[0].get('delta', {})
+
+                                                    # Send initial events on first delta (content OR tool_calls)
+                                                    if not sent_initial_events and (delta.get('content') or delta.get('tool_calls')):
+                                                        response_id = chunk_data.get('id', '')
+                                                        created = {
+                                                            "type": "response.created",
+                                                            "response": {
+                                                                "id": response_id,
+                                                                "status": "in_progress"
+                                                            }
+                                                        }
+                                                        yield f'data: {json.dumps(created)}\n\n'.encode('utf-8')
+                                                        logger.info(f"📝 Sent response.created event")
+
+                                                        added = {
+                                                            "type": "response.output_item.added",
+                                                            "item": {
+                                                                "id": "item_0",
+                                                                "type": "message",
+                                                                "role": "assistant",
+                                                                "content": []
+                                                            }
+                                                        }
+                                                        yield f'data: {json.dumps(added)}\n\n'.encode('utf-8')
+                                                        logger.info(f"📝 Sent response.output_item.added event")
+                                                        sent_initial_events = True
+
+                                                    if 'content' in delta and delta['content']:
+                                                        # Transform content delta to ChatGPT format
+                                                        transformed = {
+                                                            "type": "response.output_item.delta",
+                                                            "item_id": "item_0",
+                                                            "output_index": 0,
+                                                            "content_index": 0,
+                                                            "delta": {
+                                                                "type": "text_delta",
+                                                                "text": delta['content']
+                                                            }
+                                                        }
+                                                        output = f'data: {json.dumps(transformed)}\n\n'.encode('utf-8')
+                                                        logger.info(f"✨ Sending content delta: {json.dumps(transformed)[:150]}")
+                                                        yield output
+
+                                                    elif 'tool_calls' in delta and delta['tool_calls']:
+                                                        # Transform tool call deltas - pass through as-is for now
+                                                        # Cerebras format matches OpenAI format for tool calls
+                                                        for tool_call in delta['tool_calls']:
+                                                            tool_delta = {
+                                                                "type": "response.output_item.delta",
+                                                                "item_id": "item_0",
+                                                                "output_index": 0,
+                                                                "delta": {
+                                                                    "type": "function_call_delta",
+                                                                    "index": tool_call.get('index', 0),
+                                                                    "id": tool_call.get('id'),
+                                                                    "function": tool_call.get('function', {})
+                                                                }
+                                                            }
+                                                            # Remove None values
+                                                            if tool_delta['delta']['id'] is None:
+                                                                del tool_delta['delta']['id']
+                                                            output = f'data: {json.dumps(tool_delta)}\n\n'.encode('utf-8')
+                                                            logger.info(f"🔧 Sending tool call delta: {json.dumps(tool_delta)[:150]}")
+                                                            yield output
+
+                                                    elif choices[0].get('finish_reason'):
+                                                        # Send completion event with response ID
+                                                        completion = {
+                                                            "type": "response.completed",
+                                                            "response": {
+                                                                "id": response_id or chunk_data.get('id', ''),
+                                                                "status": "completed"
+                                                            }
+                                                        }
+                                                        output = f'data: {json.dumps(completion)}\n\n'.encode('utf-8')
+                                                        logger.info(f"✅ Yielding response.completed with ID: {response_id}")
+                                                        yield output
+                                                        # Send final empty line to signal stream end
+                                                        yield b'\n'
+                                                        logger.info(f"✅ Sent final newline to signal stream end")
+                                            except json.JSONDecodeError:
+                                                # Invalid JSON - skip this chunk
+                                                logger.warning(f"Failed to parse SSE chunk: {data_str[:100]}")
+                                                continue
+                            else:
+                                # ChatGPT path - pass through as-is
+                                yield chunk
                 except Exception as e:
                     logger.error(f"Error during streaming: {e}")
                     # Ensure response is closed on error
                     if not response_closed:
                         try:
                             response.close()
-                            # Cleanup httpx client if present
-                            if hasattr(response, '_httpx_client'):
-                                response._httpx_client.close()
+                            # Note: httpx client is persistent - do not close it
                             response_closed = True
                         except:
                             pass
@@ -510,16 +675,32 @@ BEGIN EXECUTION NOW:
                     if not response_closed:
                         try:
                             response.close()
-                            # Cleanup httpx client if present
-                            if hasattr(response, '_httpx_client'):
-                                response._httpx_client.close()
+                            # Note: httpx client is persistent - do not close it
                         except:
                             pass
             
-            # Get response headers
-            resp_headers = dict(response.headers)
-            resp_headers.pop("content-length", None)
-            resp_headers.pop("content-encoding", None)
+            # Get response headers - ONLY forward essential SSE headers
+            # Strip all upstream-specific headers (Cloudflare, Cerebras, etc.)
+            upstream_headers = dict(response.headers)
+
+            # Whitelist of headers to forward (ChatGPT-compatible)
+            resp_headers = {}
+            safe_headers = {
+                "content-type",  # Required for SSE
+                "cache-control", # Caching behavior
+                "connection",    # Keep-alive
+            }
+
+            # Only forward whitelisted headers
+            for header in safe_headers:
+                if header in upstream_headers:
+                    resp_headers[header] = upstream_headers[header]
+
+            # Ensure SSE content-type is set
+            if "content-type" not in resp_headers:
+                resp_headers["content-type"] = "text/event-stream; charset=utf-8"
+
+            logger.info(f"📤 Forwarding headers: {list(resp_headers.keys())}")
             
             # Store response reference for cleanup on middleware destruction
             if not hasattr(self, '_active_responses'):
@@ -557,6 +738,11 @@ BEGIN EXECUTION NOW:
             )
 
 
-def create_llm_execution_middleware(upstream_url: str):
-    """Factory function to create middleware instance"""
-    return LLMExecutionMiddleware(upstream_url)
+def create_llm_execution_middleware(upstream_url: Optional[str] = None, url_getter: Optional[callable] = None):
+    """Factory function to create middleware instance
+
+    Args:
+        upstream_url: Static upstream URL (legacy support)
+        url_getter: Callable that returns upstream URL (allows dynamic config)
+    """
+    return LLMExecutionMiddleware(upstream_url=upstream_url, url_getter=url_getter)
