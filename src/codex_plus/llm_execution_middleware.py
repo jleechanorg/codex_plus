@@ -33,6 +33,7 @@ Breaking these rules WILL break all Codex functionality.
 """
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import re
@@ -300,16 +301,23 @@ BEGIN EXECUTION NOW:
         # Store request for status line access
         self.current_request = request
 
-        # Check if pre-input hooks modified the body
-        if hasattr(request.state, 'modified_body'):
+        # Check if logging-only mode is enabled (passthrough without modification)
+        logging_mode = os.getenv("CODEX_PLUS_LOGGING_MODE", "false") == "true"
+        if logging_mode:
+            logger.info("📝 Logging mode enabled - forwarding request without modification")
+
+        # In logging mode, always use original body; otherwise check for hook modifications
+        if logging_mode:
+            body = await request.body()
+        elif hasattr(request.state, 'modified_body'):
             body = request.state.modified_body
             logger.info("Using modified body from pre-input hooks")
         else:
             body = await request.body()
         headers = dict(request.headers)
 
-        # Only process if we have a JSON body
-        if body:
+        # Only process if we have a JSON body and logging mode is NOT enabled
+        if body and not logging_mode:
             try:
                 # Parse and potentially modify the request
                 data = json.loads(body)

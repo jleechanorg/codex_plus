@@ -1,4 +1,5 @@
 # test_proxy.py
+import os
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, Mock
@@ -311,3 +312,34 @@ class TestEdgeCases:
 
         # Should complete 10 requests within reasonable time (adjust threshold as needed)
         assert total_time < 5.0, f"Security validation took too long: {total_time}s for 10 requests"
+
+
+class TestLoggingModePassthrough:
+    """Ensure logging-only mode forwards payloads untouched."""
+
+    def test_logging_mode_preserves_request_body(self):
+        payload = {
+            "messages": [
+                {"role": "user", "content": "/test example"}
+            ]
+        }
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.text = json.dumps({"ok": True})
+        mock_response.iter_content.return_value = [mock_response.text.encode()]
+
+        with patch('curl_cffi.requests.Session') as mock_session_class:
+            mock_session = Mock()
+            mock_session.request.return_value = mock_response
+            mock_session_class.return_value = mock_session
+
+            with patch.dict(os.environ, {"CODEX_PLUS_LOGGING_MODE": "true"}, clear=False):
+                response = client.post("/v1/chat/completions", json=payload)
+
+        assert response.status_code == 200
+        forwarded_args, forwarded_kwargs = mock_session.request.call_args
+        forwarded_body = forwarded_kwargs.get("data")
+        assert forwarded_body is not None
+        assert json.loads(forwarded_body) == payload
