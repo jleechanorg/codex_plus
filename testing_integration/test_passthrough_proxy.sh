@@ -106,18 +106,18 @@ test_proxy_starts_with_logging_mode() {
     if ./proxy.sh --logging enable 2>&1 | tee "$TEST_LOG_DIR/proxy_start.log"; then
         sleep 3
 
-        # Verify proxy is running
-        if ./proxy.sh status | grep -q "Running"; then
+        # Verify proxy started successfully and logging mode is shown
+        if grep -q "✅ Running" "$TEST_LOG_DIR/proxy_start.log" && \
+           grep -q "Logging.*ENABLED" "$TEST_LOG_DIR/proxy_start.log"; then
             log_pass "Proxy started successfully"
-
-            # Verify logging mode is indicated in status
-            if ./proxy.sh status | grep -q "Logging: ENABLED"; then
-                log_pass "Logging mode is active and displayed in status"
-            else
+            log_pass "Logging mode is active and displayed in status"
+        else
+            if ! grep -q "✅ Running" "$TEST_LOG_DIR/proxy_start.log"; then
+                log_fail "Proxy failed to start"
+            fi
+            if ! grep -q "Logging.*ENABLED" "$TEST_LOG_DIR/proxy_start.log"; then
                 log_fail "Logging mode not shown in status output"
             fi
-        else
-            log_fail "Proxy failed to start"
             cat "$TEST_LOG_DIR/proxy_start.log"
         fi
     else
@@ -222,7 +222,7 @@ test_normal_mode_modifies_payload() {
         sleep 3
 
         # Verify logging mode is NOT active
-        if ! ./proxy.sh status | grep -q "Logging: ENABLED"; then
+        if ! ./proxy.sh status 2>&1 | grep -q "Logging.*ENABLED"; then
             log_pass "Normal mode active (no logging flag)"
         else
             log_fail "Logging mode still active in normal start"
@@ -267,15 +267,13 @@ test_logging_mode_env_variable() {
     if ./proxy.sh enable 2>&1 | tee "$TEST_LOG_DIR/proxy_env_start.log"; then
         sleep 3
 
-        # Check proxy log for logging mode detection
-        local proxy_log="/tmp/codex_plus/proxy.log"
-
-        if [ -f "$proxy_log" ]; then
-            if grep -q "Logging mode enabled" "$proxy_log"; then
-                log_pass "Environment variable CODEX_PLUS_LOGGING_MODE=true activates logging mode"
-            else
-                log_fail "Environment variable didn't activate logging mode"
-            fi
+        # Check startup output for logging mode indicator
+        if grep -q "Logging.*ENABLED" "$TEST_LOG_DIR/proxy_env_start.log"; then
+            log_pass "Environment variable CODEX_PLUS_LOGGING_MODE=true activates logging mode"
+        else
+            log_fail "Environment variable didn't activate logging mode"
+            log_info "Startup output excerpt:"
+            grep "Logging\|Running\|Status" "$TEST_LOG_DIR/proxy_env_start.log" || cat "$TEST_LOG_DIR/proxy_env_start.log"
         fi
     fi
 

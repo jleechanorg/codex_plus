@@ -179,6 +179,11 @@ cleanup_stale_resources() {
         fi
     fi
 
+    # Clean up logging mode state file
+    if [ -f "$RUNTIME_DIR/logging.mode" ]; then
+        rm -f "$RUNTIME_DIR/logging.mode"
+    fi
+
     # Clean up any orphaned proxy processes
     local orphaned_pids=$(pgrep -f "python.*$PROXY_MODULE" | grep -v "$$" || true)
     if [ -n "$orphaned_pids" ]; then
@@ -208,7 +213,8 @@ print_status() {
                     echo -e "  ${GREEN}🌐 Mode:${NC} $provider_display"
                 fi
             fi
-            if [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
+            # Check both environment variable and persisted file
+            if [ -f "$RUNTIME_DIR/logging.mode" ] || [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
                 echo -e "  ${BLUE}📝 Logging:${NC} ENABLED (passthrough only)"
             fi
             echo -e "  ${GREEN}📊 Upstream:${NC} $(get_upstream_url)"
@@ -342,8 +348,14 @@ start_proxy() {
     export PYTHONPATH="$SCRIPT_DIR/src:$PYTHONPATH"
 
     # Export logging mode flag for middleware to check
-    if [ "$LOGGING_MODE" = "true" ]; then
+    # Check both --logging flag and CODEX_PLUS_LOGGING_MODE environment variable
+    if [ "$LOGGING_MODE" = "true" ] || [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
         export CODEX_PLUS_LOGGING_MODE="true"
+        # Persist logging mode state for status display
+        echo "true" > "$RUNTIME_DIR/logging.mode"
+    else
+        # Remove logging mode file if not in logging mode
+        rm -f "$RUNTIME_DIR/logging.mode"
     fi
 
     # 🚨🚨🚨 CRITICAL PROXY STARTUP COMMAND - DO NOT MODIFY 🚨🚨🚨
@@ -394,6 +406,10 @@ except Exception as e:
         echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
         echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
         echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
+        # Check both environment variable and persisted file for logging mode
+        if [ -f "$RUNTIME_DIR/logging.mode" ] || [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
+            echo -e "  ${BLUE}📝 Logging:${NC} ENABLED (passthrough only)"
+        fi
         echo -e "  ${GREEN}📊 Upstream:${NC} $(get_upstream_url)"
         return 0
     else
@@ -477,8 +493,9 @@ stop_proxy() {
         echo -e "${GREEN}✅ Cleaned up remaining processes${NC}"
     fi
 
-    # Clean up lock files
+    # Clean up lock files and logging mode state
     rm -f "$RUNTIME_DIR/proxy.lock"
+    rm -f "$RUNTIME_DIR/logging.mode"
 }
 
 restart_proxy() {
