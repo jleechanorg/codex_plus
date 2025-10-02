@@ -98,19 +98,28 @@ enabled: true
 ---
 from codex_plus.hooks import Hook
 
+
+def mutate_first_input_text_block(body):
+    messages = body.get('input') or []
+    if not (messages and isinstance(messages, list)):
+        return body
+    first = messages[0]
+    if not isinstance(first, dict):
+        return body
+    content = first.get('content')
+    if not (isinstance(content, list) and content):
+        return body
+    block = content[0]
+    if isinstance(block, dict) and block.get('type') == 'input_text':
+        block['text'] = f"[HOOKED] {block.get('text', '')}"
+    return body
+
+
 class MutateNested(Hook):
     name = "mutate-nested"
+
     async def pre_input(self, request, body):
-        messages = body.get('input') or []
-        if messages and isinstance(messages, list):
-            first = messages[0]
-            if isinstance(first, dict):
-                content = first.get('content')
-                if isinstance(content, list) and content:
-                    block = content[0]
-                    if isinstance(block, dict) and block.get('type') == 'input_text':
-                        block['text'] = f"[HOOKED] {block.get('text', '')}"
-        return body
+        return mutate_first_input_text_block(body)
 hook = MutateNested('mutate-nested', {'type': 'pre-input', 'priority': 5, 'enabled': True})
 """
     hook_file = write_hook(hooks_dir, "mutate_nested", hook_code)
@@ -151,7 +160,7 @@ hook = MutateNested('mutate-nested', {'type': 'pre-input', 'priority': 5, 'enabl
             }
             r = client.post("/responses", json=payload)
             assert r.status_code == 200
-            args, kwargs = mock_session.request.call_args
+            _args, kwargs = mock_session.request.call_args
             sent_body = kwargs.get("data")
             assert isinstance(sent_body, (bytes, bytearray))
             sent_json = json.loads(sent_body)
