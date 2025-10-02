@@ -131,7 +131,7 @@ if self.provider_mode == "cerebras":
 
 | Codex Field | Cerebras Field | Transformation |
 |-------------|----------------|----------------|
-| `model: "gpt-5-codex"` | `model: "llama-3.3-70b"` | Model name mapping |
+| `model: "gpt-5-codex"` | `model: "gpt-oss-120b"` | Model name mapping (configurable via `CEREBRAS_MODEL`) |
 | `instructions: "..."` | `messages[0]: {role: "system", content: "..."}` | Merge as system message |
 | `input: [{type: "message", role, content}]` | `messages: [{role, content}]` | Flatten structure |
 | `content: [{type: "input_text", text}]` | `content: "text"` | Extract text |

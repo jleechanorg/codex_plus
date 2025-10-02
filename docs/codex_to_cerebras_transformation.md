@@ -64,7 +64,7 @@ This document analyzes the request/response format differences between Codex CLI
 #### Cerebras/OpenAI Request Format
 ```json
 {
-  "model": "llama-3.3-70b",
+  "model": "gpt-oss-120b",
   "messages": [
     {
       "role": "system",
@@ -385,7 +385,7 @@ Both formats are largely compatible for non-streaming responses:
   "id": "chatcmpl-123",
   "object": "chat.completion",
   "created": 1234567890,
-  "model": "llama-3.3-70b",
+  "model": "gpt-oss-120b",
   "choices": [
     {
       "index": 0,
@@ -415,11 +415,11 @@ Both use Server-Sent Events (SSE) format:
 
 **OpenAI Stream Chunk**:
 ```text
-data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"llama-3.3-70b","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-oss-120b","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}
 
-data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"llama-3.3-70b","choices":[{"index":0,"delta":{"content":"!"},"finish_reason":null}]}
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-oss-120b","choices":[{"index":0,"delta":{"content":"!"},"finish_reason":null}]}
 
-data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"llama-3.3-70b","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-oss-120b","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 
 data: [DONE]
 ```
@@ -753,7 +753,7 @@ def test_model_mapping():
 
     result = transformer.transform_request(codex_request)
 
-    assert result["model"] == "llama-3.3-70b"
+    assert result["model"] == "gpt-oss-120b"
 ```
 
 ### 8.2 Integration Tests

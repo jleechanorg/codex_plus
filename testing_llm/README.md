@@ -23,12 +23,12 @@ testing_llm/
 ├── 03_streaming_response.md    # Medium: Streaming validation
 ├── 04_tool_calling.md          # Medium: Function calling test
 └── evidence/                   # Test evidence (gitignored)
-```text
+```
 
 ## Evidence Path
 
 All test evidence saved to:
-```
+```text
 /tmp/codex_plus/cereb_conversion/test_evidence/<test_name>/
 ```
 
