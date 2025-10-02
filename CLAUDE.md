@@ -73,6 +73,24 @@ Breaking these rules will immediately break ALL Codex functionality, blocking re
 
 **Current Implementation**: The proxy now includes integrated LLM execution middleware that instructs Claude to natively execute slash commands by reading command definition files from `.codexplus/commands/` or `.claude/commands/` directories.
 
+## 📁 Directory Structure Clarification
+
+**IMPORTANT**: There are TWO separate command systems:
+
+1. **`.codexplus/` - Codex-Plus Proxy Commands**
+   - This is SPECIFIC to this proxy project only
+   - NOT used by Claude Code CLI
+   - Used by the proxy's slash command middleware
+   - Examples: proxy-specific tools, testing commands
+
+2. **`.claude/` - Claude Code CLI Commands**
+   - This is the STANDARD directory for Claude Code CLI
+   - Used by official Claude Code CLI tool
+   - Compatible with Claude Code's native slash command system
+   - Examples: standard development commands, AI workflows
+
+**Search Order**: The proxy searches `.codexplus/commands/` first (proxy-specific), then `.claude/commands/` (CLI-compatible). This allows the proxy to have its own commands while remaining compatible with Claude Code CLI conventions.
+
 ## Development Commands
 
 ### Core Development
@@ -218,17 +236,20 @@ codex_plus/
 │   ├── test_hooks_integration.py # Hook integration tests
 │   ├── test_copilot_command.py  # Copilot command tests
 │   └── claude/hooks/            # Hook-specific tests
-├── .codexplus/                  # Primary configuration
-│   ├── commands/                # Slash command definitions
+├── .codexplus/                  # Proxy-specific configuration (NOT Claude Code CLI)
+│   ├── commands/                # Proxy-specific slash commands
 │   │   ├── copilot.md           # Autonomous PR processing
 │   │   ├── echo.md              # Echo test command
 │   │   ├── hello.md             # Hello world command
 │   │   └── test-args.md         # Argument testing
-│   ├── hooks/                   # Hook implementations
+│   ├── hooks/                   # Proxy-specific hook implementations
 │   │   ├── add_context.py       # UserPromptSubmit hook example
 │   │   ├── post_add_header.py   # Post-output hook example
 │   │   └── shared_utils.py      # Hook utilities
-│   └── settings.json            # Project-level hook configuration
+│   └── settings.json            # Proxy-specific hook configuration
+├── .claude/                     # Claude Code CLI configuration (standard)
+│   ├── commands/                # Claude Code CLI slash commands
+│   └── settings.json            # Claude Code CLI settings
 ├── .github/workflows/           # CI/CD
 │   └── tests.yml                # GitHub Actions test workflow
 ├── scripts/                     # Development and deployment scripts
