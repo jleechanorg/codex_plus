@@ -323,11 +323,18 @@ BEGIN EXECUTION NOW:
         # Log request headers for debugging
         logger.info(f"📨 Request headers: {dict(request.headers)}")
 
-        # Check if pre-input hooks modified the body. Starlette's request.state
-        # stores explicit attributes in __dict__, so guard against Mock objects
-        # that auto-create attributes during tests.
+        # Check if logging-only mode is enabled (passthrough without modification)
+        logging_mode = os.getenv("CODEX_PLUS_LOGGING_MODE", "false") == "true"
+        if logging_mode:
+            logger.info("📝 Logging mode enabled - forwarding request without modification")
+
+        # In logging mode, always use original body; otherwise check for hook modifications
+        # Starlette's request.state stores explicit attributes in __dict__, so guard against
+        # Mock objects that auto-create attributes during tests.
         state_dict = getattr(request.state, "__dict__", {})
-        if "modified_body" in state_dict:
+        if logging_mode:
+            body = await request.body()
+        elif "modified_body" in state_dict:
             body = state_dict["modified_body"]
             if isinstance(body, str):
                 body = body.encode("utf-8")
@@ -336,8 +343,8 @@ BEGIN EXECUTION NOW:
             body = await request.body()
         headers = dict(request.headers)
 
-        # Only process if we have a JSON body
-        if body:
+        # Only process if we have a JSON body and logging mode is NOT enabled
+        if body and not logging_mode:
             try:
                 # Parse and potentially modify the request
                 data = json.loads(body)

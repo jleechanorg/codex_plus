@@ -54,12 +54,17 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Parse global flags (currently only --cerebras)
+# Parse global flags (currently only --cerebras and --logging)
 POSITIONAL_ARGS=()
+LOGGING_MODE="false"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --cerebras)
             PROVIDER_MODE="cerebras"
+            shift
+            ;;
+        --logging)
+            LOGGING_MODE="true"
             shift
             ;;
         --)
@@ -170,6 +175,11 @@ cleanup_stale_resources() {
         fi
     fi
 
+    # Clean up logging mode state file
+    if [ -f "$RUNTIME_DIR/logging.mode" ]; then
+        rm -f "$RUNTIME_DIR/logging.mode"
+    fi
+
     # Clean up any orphaned proxy processes
     local orphaned_pids=$(pgrep -f "python.*$PROXY_MODULE" | grep -v "$$" || true)
     if [ -n "$orphaned_pids" ]; then
@@ -198,6 +208,10 @@ print_status() {
                     provider_display=$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')
                     echo -e "  ${GREEN}🌐 Mode:${NC} $provider_display"
                 fi
+            fi
+            # Check both environment variable and persisted file
+            if [ -f "$RUNTIME_DIR/logging.mode" ] || [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
+                echo -e "  ${BLUE}📝 Logging:${NC} ENABLED (passthrough only)"
             fi
             echo -e "  ${GREEN}📊 Upstream:${NC} $(get_upstream_url)"
             return 0
@@ -329,6 +343,17 @@ start_proxy() {
 
     export PYTHONPATH="$SCRIPT_DIR/src:$PYTHONPATH"
 
+    # Export logging mode flag for middleware to check
+    # Check both --logging flag and CODEX_PLUS_LOGGING_MODE environment variable
+    if [ "$LOGGING_MODE" = "true" ] || [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
+        export CODEX_PLUS_LOGGING_MODE="true"
+        # Persist logging mode state for status display
+        echo "true" > "$RUNTIME_DIR/logging.mode"
+    else
+        # Remove logging mode file if not in logging mode
+        rm -f "$RUNTIME_DIR/logging.mode"
+    fi
+
     # 🚨🚨🚨 CRITICAL PROXY STARTUP COMMAND - DO NOT MODIFY 🚨🚨🚨
     # ⚠️ This command starts the curl_cffi proxy with Cloudflare bypass ⚠️
     # ❌ FORBIDDEN: Changing module, host, port, or import structure
@@ -380,6 +405,10 @@ except Exception as e:
         echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
         echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
         echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
+        # Check both environment variable and persisted file for logging mode
+        if [ -f "$RUNTIME_DIR/logging.mode" ] || [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
+            echo -e "  ${BLUE}📝 Logging:${NC} ENABLED (passthrough only)"
+        fi
         echo -e "  ${GREEN}📊 Upstream:${NC} $(get_upstream_url)"
         return 0
     else
@@ -463,8 +492,9 @@ stop_proxy() {
         echo -e "${GREEN}✅ Cleaned up remaining processes${NC}"
     fi
 
-    # Clean up lock files
+    # Clean up lock files and logging mode state
     rm -f "$RUNTIME_DIR/proxy.lock"
+    rm -f "$RUNTIME_DIR/logging.mode"
 }
 
 restart_proxy() {
@@ -635,10 +665,11 @@ handle_autostart() {
 show_help() {
     echo -e "${BLUE}Codex-Plus Simple Proxy Control Script${NC}"
     echo ""
-    echo "Usage: $0 [--cerebras] [command]"
+    echo "Usage: $0 [--cerebras] [--logging] [command]"
     echo ""
     echo "Options:"
     echo -e "  ${GREEN}--cerebras${NC}  Use Cerebras credentials (requires CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL)"
+    echo -e "  ${GREEN}--logging${NC}   Enable logging-only mode (passthrough without modification)"
     echo ""
     echo "Commands:"
     echo -e "  ${GREEN}enable${NC}   Start the proxy server"
