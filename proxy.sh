@@ -33,9 +33,11 @@ VENV_PATH="$SCRIPT_DIR/venv"
 PROXY_MODULE="main_sync_cffi"
 # Runtime files under /tmp/codex_plus
 RUNTIME_DIR="/tmp/codex_plus"
-PID_FILE="$RUNTIME_DIR/proxy.pid"
-LOG_FILE="$RUNTIME_DIR/proxy.log"
-LOCK_FILE="$RUNTIME_DIR/proxy.lock"
+# Port configuration must be set before PID file paths
+PROXY_PORT="${PROXY_PORT:-10000}"
+PID_FILE="$RUNTIME_DIR/proxy_${PROXY_PORT}.pid"
+LOG_FILE="$RUNTIME_DIR/proxy_${PROXY_PORT}.log"
+LOCK_FILE="$RUNTIME_DIR/proxy_${PROXY_PORT}.lock"
 # Autostart configuration
 AUTOSTART_LABEL="com.codex.plus.proxy"
 LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
@@ -46,8 +48,6 @@ CRONTAB_ENTRY="@reboot cd $SCRIPT_DIR && ./proxy.sh enable"
 PROVIDER_MODE="openai"
 FORCE_RESTART="false"
 DEFAULT_UPSTREAM_URL="https://chatgpt.com/backend-api/codex"
-# Port configuration - default 10000 for Codex compatibility, can override with PROXY_PORT
-PROXY_PORT="${PROXY_PORT:-10000}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -182,10 +182,10 @@ cleanup_stale_resources() {
         rm -f "$RUNTIME_DIR/logging.mode"
     fi
 
-    # Clean up any orphaned proxy processes
-    local orphaned_pids=$(pgrep -f "python.*$PROXY_MODULE" | grep -v "$$" || true)
+    # Clean up any orphaned proxy process on THIS port only
+    local orphaned_pids=$(lsof -ti :$PROXY_PORT 2>/dev/null || true)
     if [ -n "$orphaned_pids" ]; then
-        echo -e "${YELLOW}🧹 Found orphaned proxy processes: $orphaned_pids${NC}"
+        echo -e "${YELLOW}🧹 Found orphaned proxy process on port $PROXY_PORT: $orphaned_pids${NC}"
         echo "$orphaned_pids" | xargs -r kill -TERM 2>/dev/null || true
         sleep 2
         echo "$orphaned_pids" | xargs -r kill -KILL 2>/dev/null || true
@@ -278,16 +278,16 @@ start_proxy() {
     fi
 
     # Kill existing proxy processes instead of waiting for locks
-    echo -e "${YELLOW}🔄 Checking for existing proxy processes...${NC}"
+    echo -e "${YELLOW}🔄 Checking for existing proxy processes on port $PROXY_PORT...${NC}"
 
-    # Kill any existing proxy processes on port 10000 - multiple attempts
+    # Kill any existing proxy processes on THIS port only - multiple attempts
     for attempt in 1 2 3; do
-        local existing_pids=$(lsof -ti :10000 2>/dev/null)
+        local existing_pids=$(lsof -ti :$PROXY_PORT 2>/dev/null)
         if [ -z "$existing_pids" ]; then
             break
         fi
 
-        echo -e "${YELLOW}⚡ Attempt $attempt: Killing proxy processes: $existing_pids${NC}"
+        echo -e "${YELLOW}⚡ Attempt $attempt: Killing proxy processes on port $PROXY_PORT: $existing_pids${NC}"
 
         # Try TERM first, then KILL
         if [ "$attempt" -le 2 ]; then
@@ -299,24 +299,21 @@ start_proxy() {
         sleep 2
     done
 
-    # Also kill any uvicorn processes that might be related
-    pkill -f "uvicorn.*codex_plus" 2>/dev/null || true
-
-    # Final check - if still running, force kill everything
-    if lsof -i :10000 >/dev/null 2>&1; then
-        echo -e "${YELLOW}🔨 Force killing all processes on port 10000...${NC}"
-        lsof -ti :10000 2>/dev/null | xargs -r kill -9 2>/dev/null
+    # Final check - if still running, force kill
+    if lsof -i :$PROXY_PORT >/dev/null 2>&1; then
+        echo -e "${YELLOW}🔨 Force killing all processes on port $PROXY_PORT...${NC}"
+        lsof -ti :$PROXY_PORT 2>/dev/null | xargs -r kill -9 2>/dev/null
         sleep 3
 
         # If STILL running, give up
-        if lsof -i :10000 >/dev/null 2>&1; then
-            echo -e "${RED}❌ Failed to stop existing proxy on port 10000${NC}"
-            lsof -i :10000
+        if lsof -i :$PROXY_PORT >/dev/null 2>&1; then
+            echo -e "${RED}❌ Failed to stop existing proxy on port $PROXY_PORT${NC}"
+            lsof -i :$PROXY_PORT
             return 1
         fi
     fi
 
-    echo -e "${GREEN}✅ Port 10000 is now available${NC}"
+    echo -e "${GREEN}✅ Port $PROXY_PORT is now available${NC}"
 
     # Validate environment
     cd "$SCRIPT_DIR" || {
@@ -486,18 +483,18 @@ stop_proxy() {
         echo -e "${YELLOW}⚠️  No PID file found${NC}"
     fi
 
-    # Clean up any remaining proxy processes as fallback
-    local remaining_pids=$(pgrep -f "python.*$PROXY_MODULE" | grep -v "$$" || true)
+    # Clean up any remaining proxy process on THIS port as fallback
+    local remaining_pids=$(lsof -ti :$PROXY_PORT 2>/dev/null || true)
     if [ -n "$remaining_pids" ]; then
-        echo -e "${YELLOW}🧹 Cleaning up remaining proxy processes: $remaining_pids${NC}"
+        echo -e "${YELLOW}🧹 Cleaning up remaining proxy process on port $PROXY_PORT: $remaining_pids${NC}"
         echo "$remaining_pids" | xargs -r kill -TERM 2>/dev/null || true
         sleep 2
         echo "$remaining_pids" | xargs -r kill -KILL 2>/dev/null || true
         echo -e "${GREEN}✅ Cleaned up remaining processes${NC}"
     fi
 
-    # Clean up lock files and logging mode state
-    rm -f "$RUNTIME_DIR/proxy.lock"
+    # Clean up lock files and logging mode state for THIS port
+    rm -f "$LOCK_FILE"
     rm -f "$RUNTIME_DIR/logging.mode"
 }
 
