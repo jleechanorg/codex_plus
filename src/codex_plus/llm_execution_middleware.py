@@ -306,11 +306,12 @@ BEGIN EXECUTION NOW:
         if logging_mode:
             logger.info("📝 Logging mode enabled - forwarding request without modification")
 
-        # Check if pre-input hooks modified the body
-        if hasattr(request.state, 'modified_body'):
+        # In logging mode, always use original body; otherwise check for hook modifications
+        if logging_mode:
+            body = await request.body()
+        elif hasattr(request.state, 'modified_body'):
             body = request.state.modified_body
-            if not logging_mode:
-                logger.info("Using modified body from pre-input hooks")
+            logger.info("Using modified body from pre-input hooks")
         else:
             body = await request.body()
         headers = dict(request.headers)

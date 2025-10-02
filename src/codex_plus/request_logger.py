@@ -23,6 +23,8 @@ class RequestLogger:
 
         try:
             # Schedule async logging without blocking
+            # Note: _close_if_pending is defined inline as it's specific to async logging context
+            # and only used within this method. Keeping it nested improves cohesion.
             def _close_if_pending(coro) -> None:
                 """Close coroutine if it wasn't scheduled/awaited (e.g., mocked loop)."""
                 if inspect.iscoroutine(coro) and hasattr(coro, "close"):
@@ -52,13 +54,8 @@ class RequestLogger:
                 # When the event loop is mocked in tests, create_task may return a MagicMock or coroutine.
                 if not isinstance(task, asyncio.Task):
                     _close_if_pending(coroutine)
-
-                    # AsyncMock returns a coroutine object; close it so tests don't emit warnings.
-                    if inspect.iscoroutine(task) and hasattr(task, "close"):
-                        try:
-                            task.close()
-                        except RuntimeError:
-                            pass
+                    # AsyncMock may return a coroutine; close it using the same helper
+                    _close_if_pending(task)
         except Exception as e:
             logger.error(f"Failed to log request payload: {e}")
 
