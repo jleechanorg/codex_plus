@@ -4,8 +4,9 @@ Codex to OpenAI-Compatible Request Format Transformer
 Transforms Codex CLI requests to OpenAI-compatible format (Cerebras, gpt-oss, DeepSeek, etc.).
 Based on specification in docs/codex_to_cerebras_transformation.md
 """
-from typing import Dict, List, Any, Optional
+import json
 import logging
+from typing import Any, ClassVar, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +29,14 @@ class CodexToCerebrasTransformer:
 
     # Model name mapping - use explicit Cerebras equivalents when known, otherwise
     # fall back to the configured default model (env override or class default).
-    MODEL_MAP: Dict[str, str] = {
-        "gpt-5-codex": "llama-3.3-70b",
-        "gpt-4.1-codex": "llama-3.1-70b",
-        "gpt-4-codex": "llama-3.1-70b",
-        "gpt-4.1-mini": "llama-3.1-8b",
+    MODEL_MAP: ClassVar[Dict[str, str]] = {
+        "gpt-5-codex": "gpt-oss-120b",
+        "gpt-4.1-codex": "gpt-oss-120b",
+        "gpt-4-codex": "gpt-oss-120b",
+        "gpt-4.1-mini": "gpt-oss-120b",
     }
 
-    def __init__(self, default_model: str = None):
+    def __init__(self, default_model: Optional[str] = None):
         """
         Initialize transformer.
 
@@ -51,7 +52,7 @@ class CodexToCerebrasTransformer:
         self.default_model = default_model
         logger.info(f"🔧 Using Cerebras model: {self.default_model}")
 
-    def transform_request(self, codex_request: Dict[str, Any]) -> Dict[str, Any]:
+    def transform_request(self, codex_request: Union[Dict[str, Any], str]) -> Dict[str, Any]:
         """
         Transform complete Codex request to Cerebras format.
 
@@ -65,6 +66,19 @@ class CodexToCerebrasTransformer:
             TransformationError: If transformation fails
         """
         try:
+            if isinstance(codex_request, str):
+                try:
+                    codex_request = json.loads(codex_request)
+                except json.JSONDecodeError as exc:
+                    raise TransformationError(
+                        "Unable to parse Codex request string as JSON"
+                    ) from exc
+
+            if not isinstance(codex_request, dict):
+                raise TransformationError(
+                    f"Expected dict, got {type(codex_request).__name__}."
+                )
+
             cerebras_request = {}
 
             # 1. Transform model name
@@ -79,7 +93,7 @@ class CodexToCerebrasTransformer:
 
             # 3. Transform tools when present. Keep metadata even if the target
             # model may not execute tool calls so downstream layers can decide.
-            if "tools" in codex_request and codex_request["tools"]:
+            if codex_request.get("tools"):
                 cerebras_request["tools"] = self._transform_tools(codex_request["tools"])
 
                 if "tool_choice" in codex_request:
@@ -195,18 +209,39 @@ class CodexToCerebrasTransformer:
             msg_type = input_msg.get("type")
 
             if msg_type == "message":
-                transformed_msg = {
+                transformed_msg: Dict[str, Any] = {
                     "role": input_msg.get("role", "user")
                 }
 
-                # Flatten content array to string
-                content = self._extract_content(input_msg.get("content", []))
-                if content:
+                raw_content = input_msg.get("content")
+                content = self._extract_content(raw_content or [])
+                if content is not None:
                     transformed_msg["content"] = content
+                elif raw_content is not None:
+                    transformed_msg["content"] = None
 
-                # Preserve tool_call_id for tool responses
+                if "tool_calls" in input_msg:
+                    transformed_msg["tool_calls"] = input_msg["tool_calls"]
+
                 if "tool_call_id" in input_msg:
                     transformed_msg["tool_call_id"] = input_msg["tool_call_id"]
+
+                messages.append(transformed_msg)
+
+            elif msg_type == "tool":
+                transformed_msg = {
+                    "role": "tool",
+                    "tool_call_id": input_msg.get("tool_call_id") or input_msg.get("id")
+                }
+
+                content = input_msg.get("content")
+                if isinstance(content, list):
+                    content = self._extract_content(content)
+
+                if content is not None:
+                    transformed_msg["content"] = content
+                elif input_msg.get("content") is not None:
+                    transformed_msg["content"] = None
 
                 messages.append(transformed_msg)
 
@@ -255,7 +290,7 @@ class CodexToCerebrasTransformer:
             else:
                 # Preserve unknown message types as assistant commentary for transparency
                 fallback_content = self._extract_content(input_msg.get("content", []))
-                if fallback_content:
+                if fallback_content is not None:
                     messages.append({
                         "role": input_msg.get("role", "assistant"),
                         "content": fallback_content
@@ -263,7 +298,7 @@ class CodexToCerebrasTransformer:
 
         return messages
 
-    def _extract_content(self, content_array: List[Dict]) -> str:
+    def _extract_content(self, content_array: List[Dict]) -> Optional[str]:
         """
         Extract text content from Codex content array.
 
@@ -279,7 +314,7 @@ class CodexToCerebrasTransformer:
         Returns:
             Concatenated text content
         """
-        text_parts = []
+        text_parts: List[str] = []
 
         for content_item in content_array:
             text = content_item.get("text")
@@ -288,7 +323,10 @@ class CodexToCerebrasTransformer:
             # Ignore other types (image, etc.) for now
             # TODO: Handle multimodal content if Cerebras supports it
 
-        return "\n\n".join(text_parts)
+        if not text_parts:
+            return None
+
+        return "\n".join(text_parts)
 
     def _transform_tools(self, codex_tools: List[Dict]) -> List[Dict]:
         """

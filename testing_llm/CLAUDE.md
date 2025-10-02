@@ -1,6 +1,6 @@
 # Instructions for LLM Test Execution
 
-**YOU ARE EXECUTING TEST CASES, NOT WRITING CODE**
+## YOU ARE EXECUTING TEST CASES, NOT WRITING CODE
 
 ## Your Role
 

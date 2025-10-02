@@ -59,6 +59,7 @@ class DummyStream:
         return self.response
 
     async def __aexit__(self, exc_type, exc, tb):
+        await self.response.aclose()
         return False
 
 
@@ -128,7 +129,8 @@ class TestDualHTTPClient:
             mock_client.stream.assert_called_once()
             call_kwargs = mock_client.stream.call_args.kwargs
             assert call_kwargs["headers"]["Authorization"].endswith("test_key")
-            assert call_kwargs["json"]["model"] != "gpt-5-codex"
+            payload = json.loads(call_kwargs["content"].decode())
+            assert payload["model"] != "gpt-5-codex"
 
     @pytest.mark.asyncio
     async def test_cerebras_request_transformation_still_applied(self):
@@ -157,11 +159,11 @@ class TestDualHTTPClient:
             with patch.dict('os.environ', {'OPENAI_API_KEY': 'test_key'}, clear=False):
                 response = await middleware.process_request(request, "responses")
 
-            sent_json = mock_client.stream.call_args.kwargs["json"]
-            assert sent_json["model"] != "gpt-5-codex"
-            assert "instructions" not in sent_json
-            assert "input" not in sent_json
-            assert sent_json["tools"][0]["type"] == "function"
+            sent_body = json.loads(mock_client.stream.call_args.kwargs["content"].decode())
+            assert sent_body["model"] != "gpt-5-codex"
+            assert "instructions" not in sent_body
+            assert "input" not in sent_body
+            assert sent_body["tools"][0]["type"] == "function"
 
     @pytest.mark.asyncio
     async def test_cerebras_endpoint_transformation(self):

@@ -34,13 +34,17 @@ Breaking these rules WILL break all Codex functionality.
 import json
 import logging
 import os
+import re
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-import re
-from fastapi.responses import JSONResponse
-from .cerebras_middleware import CerebrasMiddleware
+from urllib.parse import urlparse
+
 import httpx
+from fastapi.responses import JSONResponse
 from curl_cffi import requests
+
+from .cerebras_middleware import CerebrasMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +76,12 @@ class LLMExecutionMiddleware:
 
     def _is_cerebras_upstream(self, url: str) -> bool:
         """Check if URL is Cerebras API endpoint"""
-        return "api.cerebras.ai" in url
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            return False
+
+        return parsed.hostname == "api.cerebras.ai"
         
     def _find_claude_dir(self) -> Optional[Path]:
         """Find .claude directory in project hierarchy"""
@@ -320,8 +329,18 @@ BEGIN EXECUTION NOW:
         # Store request for status line access
         self.current_request = request
 
-        # Log request headers for debugging
-        logger.info(f"📨 Request headers: {dict(request.headers)}")
+        cleanup_stack: Optional[AsyncExitStack] = None
+
+        # Log request headers for debugging with sensitive values redacted
+        raw_headers = dict(request.headers)
+        redacted_headers = {}
+        for key, value in raw_headers.items():
+            key_lower = key.lower()
+            if key_lower in {"authorization", "cookie", "set-cookie"} or "token" in key_lower:
+                redacted_headers[key] = "<REDACTED>"
+            else:
+                redacted_headers[key] = value
+        logger.debug("📨 Request headers received", extra={"headers": redacted_headers})
 
         # Check if pre-input hooks modified the body. Starlette's request.state
         # stores explicit attributes in __dict__, so guard against Mock objects
@@ -334,7 +353,7 @@ BEGIN EXECUTION NOW:
             logger.info("Using modified body from pre-input hooks")
         else:
             body = await request.body()
-        headers = dict(request.headers)
+        headers = raw_headers
 
         # Only process if we have a JSON body
         if body:
@@ -408,9 +427,7 @@ BEGIN EXECUTION NOW:
             cerebras_api_key = os.getenv("CEREBRAS_API_KEY") or os.getenv("OPENAI_API_KEY")
             if cerebras_api_key:
                 clean_headers["Authorization"] = f"Bearer {cerebras_api_key}"
-                logger.info(
-                    f"🔑 Added Cerebras API key to request headers (ends with ...{cerebras_api_key[-10:]})"
-                )
+                logger.debug("🔑 Added Cerebras API key to request headers (value redacted)")
             else:
                 logger.warning(
                     "⚠️  No Cerebras API key found in CEREBRAS_API_KEY or OPENAI_API_KEY environment variable"
@@ -428,20 +445,16 @@ BEGIN EXECUTION NOW:
             # - Use httpx for Cerebras (avoid Cloudflare blocking curl_cffi)
 
             if is_cerebras:
-                # 🔧 CEREBRAS PATH: Use httpx.stream (curl_cffi impersonation fails here)
-                logger.info("🌐 Using httpx.stream for Cerebras upstream")
+                logger.info("🌐 Using httpx.AsyncClient for Cerebras upstream")
                 try:
                     debug_body = json.loads(body) if body else {}
                     logger.info(
-                        f"📤 Sending to Cerebras: model={debug_body.get('model')}, "
-                        f"messages_count={len(debug_body.get('messages', []))}, "
-                        f"tools_count={len(debug_body.get('tools', []))}"
-                    )
-                    os.makedirs("/tmp/codex_plus/cerebras_debug", exist_ok=True)
-                    with open("/tmp/codex_plus/cerebras_debug/last_request.json", "w") as f:
-                        json.dump(debug_body, f, indent=2)
-                    logger.info(
-                        "📝 Saved full request to /tmp/codex_plus/cerebras_debug/last_request.json"
+                        "📤 Sending to Cerebras",
+                        extra={
+                            "model": debug_body.get("model"),
+                            "messages_count": len(debug_body.get("messages", [])),
+                            "tools_count": len(debug_body.get("tools", [])),
+                        },
                     )
                 except Exception as e:
                     logger.warning(f"Failed to log debug info: {e}")
@@ -454,21 +467,43 @@ BEGIN EXECUTION NOW:
                 if "Authorization" in clean_headers:
                     minimal_headers["Authorization"] = clean_headers["Authorization"]
 
+                cleanup_stack = AsyncExitStack()
                 try:
-                    response_ctx = httpx.stream(
-                        request.method,
-                        target_url,
-                        headers=minimal_headers,
-                        content=body if body else None,
-                        timeout=30.0
+                    if not hasattr(self, "_async_httpx_client"):
+                        self._async_httpx_client = httpx.AsyncClient(timeout=30.0)
+
+                    async_client: httpx.AsyncClient = self._async_httpx_client
+                    response = await cleanup_stack.enter_async_context(
+                        async_client.stream(
+                            request.method,
+                            target_url,
+                            headers=minimal_headers,
+                            content=body if body else None,
+                        )
                     )
-                    response = response_ctx.__enter__()
-                    response.iter_content = response.iter_bytes
-                    response._is_httpx = True
-                    response._close_cm = response_ctx.__exit__
                 except Exception as e:
+                    await cleanup_stack.aclose()
                     logger.error(f"Failed to initiate Cerebras request: {e}")
                     return JSONResponse({"error": str(e)}, status_code=500)
+
+                if response.status_code >= 400:
+                    try:
+                        error_bytes = await response.aread()
+                    except Exception as read_error:
+                        logger.error(f"❌ Cerebras error ({response.status_code}) - failed to read body: {read_error}")
+                        await cleanup_stack.aclose()
+                        return JSONResponse({"error": "Cerebras upstream error"}, status_code=response.status_code)
+
+                    error_text = error_bytes.decode("utf-8", errors="replace")
+                    logger.error(
+                        "❌ Cerebras error response",
+                        extra={"status": response.status_code, "body": error_text[:500]},
+                    )
+                    await cleanup_stack.aclose()
+                    return JSONResponse(
+                        content={"error": error_text},
+                        status_code=response.status_code,
+                    )
             else:
                 # 🔒 CHATGPT PATH: Use curl_cffi with Chrome impersonation (REQUIRED for Cloudflare bypass)
                 logger.info("🔒 Using curl_cffi for ChatGPT upstream")
@@ -492,212 +527,206 @@ BEGIN EXECUTION NOW:
             
             # 🔒 PROTECTED: Streaming response generator - CRITICAL for real-time responses
             # Enhanced with proper resource cleanup and Cerebras SSE transformation
-            def stream_response():
-                response_closed = False
-                # Check if we need to transform Cerebras SSE format to ChatGPT /responses format
-                is_cerebras = "api.cerebras.ai" in upstream_url
-                logger.info(f"🔄 Stream response generator started, is_cerebras={is_cerebras}, upstream={upstream_url}")
-                logger.info(f"🔍 Response status={response.status_code}, headers={dict(response.headers)}")
-
-                # Buffer for incomplete SSE chunks
-                chunk_buffer = b''
-
-                # Track if we've sent initial events for Cerebras
-                sent_initial_events = False
-                # Store response ID for consistency across events
-                response_id = None
-
-                try:
-                    # 🔒 PROTECTED: Core streaming iteration - DO NOT MODIFY
-                    logger.info(f"🔄 Starting iteration over response.iter_content")
+            if is_cerebras:
+                async def stream_response_async():
+                    chunk_buffer = b""
+                    sent_initial_events = False
+                    response_id = None
+                    logger.info(
+                        "🔄 Async stream response generator started",
+                        extra={"upstream": upstream_url},
+                    )
+                    logger.info(
+                        "🔍 Cerebras response status",
+                        extra={"status": response.status_code, "headers": dict(response.headers)},
+                    )
                     chunk_count = 0
+                    try:
+                        async for chunk in response.aiter_bytes():
+                            chunk_count += 1
+                            logger.info(
+                                "📦 Received Cerebras chunk",
+                                extra={"chunk_index": chunk_count, "size": len(chunk) if chunk else 0},
+                            )
+                            if not chunk:
+                                continue
 
-                    # Initialize response log file for ChatGPT responses
-                    if not is_cerebras:
+                            chunk_buffer += chunk
+                            events = chunk_buffer.split(b"\n\n")
+                            chunk_buffer = events[-1]
+
+                            for event in events[:-1]:
+                                if not event.strip():
+                                    continue
+
+                                logger.info("🔍 Raw Cerebras event", extra={"preview": event[:300]})
+                                lines = event.decode("utf-8", errors="ignore").strip().split("\n")
+                                for line in lines:
+                                    if not line.startswith("data: "):
+                                        continue
+
+                                    data_str = line[6:]
+                                    if data_str == "[DONE]":
+                                        completion = {
+                                            "type": "response.completed",
+                                            "response": {"status": "completed"},
+                                        }
+                                        yield f"data: {json.dumps(completion)}\n\n".encode("utf-8")
+                                        continue
+
+                                    try:
+                                        chunk_data = json.loads(data_str)
+                                    except json.JSONDecodeError:
+                                        logger.warning(
+                                            "Failed to parse SSE chunk", extra={"preview": data_str[:100]}
+                                        )
+                                        continue
+
+                                    choices = chunk_data.get("choices", [])
+                                    if not choices:
+                                        continue
+
+                                    delta = choices[0].get("delta", {})
+
+                                    if not sent_initial_events and (
+                                        delta.get("content") or delta.get("tool_calls")
+                                    ):
+                                        response_id = chunk_data.get("id", "")
+                                        created = {
+                                            "type": "response.created",
+                                            "response": {
+                                                "id": response_id,
+                                                "status": "in_progress",
+                                            },
+                                        }
+                                        yield f"data: {json.dumps(created)}\n\n".encode("utf-8")
+
+                                        if delta.get("tool_calls"):
+                                            tool_call = delta["tool_calls"][0]
+                                            function_name = (
+                                                tool_call.get("function", {}).get("name", "unknown")
+                                            )
+                                            call_id = tool_call.get("id", "call_0")
+                                            added = {
+                                                "type": "response.output_item.added",
+                                                "item": {
+                                                    "id": call_id,
+                                                    "type": "function_call",
+                                                    "name": function_name,
+                                                    "call_id": call_id,
+                                                    "arguments": "",
+                                                },
+                                            }
+                                        else:
+                                            added = {
+                                                "type": "response.output_item.added",
+                                                "item": {
+                                                    "id": "item_0",
+                                                    "type": "message",
+                                                    "role": "assistant",
+                                                    "content": [],
+                                                },
+                                            }
+
+                                        yield f"data: {json.dumps(added)}\n\n".encode("utf-8")
+                                        sent_initial_events = True
+
+                                    if delta.get("content"):
+                                        transformed = {
+                                            "type": "response.output_text.delta",
+                                            "delta": delta["content"],
+                                        }
+                                        yield f"data: {json.dumps(transformed)}\n\n".encode("utf-8")
+                                    elif delta.get("tool_calls"):
+                                        for tool_call in delta["tool_calls"]:
+                                            function_data = tool_call.get("function", {})
+                                            arguments = function_data.get("arguments")
+                                            if arguments:
+                                                tool_delta = {
+                                                    "type": "response.function_call.arguments.delta",
+                                                    "delta": arguments,
+                                                }
+                                                yield f"data: {json.dumps(tool_delta)}\n\n".encode("utf-8")
+                                    elif choices[0].get("finish_reason"):
+                                        completion = {
+                                            "type": "response.completed",
+                                            "response": {
+                                                "id": response_id or chunk_data.get("id", ""),
+                                                "status": "completed",
+                                            },
+                                        }
+                                        yield f"data: {json.dumps(completion)}\n\n".encode("utf-8")
+                                        yield b"\n"
+                    finally:
+                        if cleanup_stack is not None:
+                            await cleanup_stack.aclose()
+
+                stream_source = stream_response_async()
+            else:
+                def stream_response():
+                    response_closed = False
+                    logger.info(
+                        "🔄 Stream response generator started",
+                        extra={"upstream": upstream_url},
+                    )
+                    logger.info(
+                        "🔍 Response status",
+                        extra={"status": response.status_code, "headers": dict(response.headers)},
+                    )
+
+                    chunk_count = 0
+                    try:
                         try:
                             log_dir = Path("/tmp/codex_plus/chatgpt_responses")
                             log_dir.mkdir(parents=True, exist_ok=True)
-                            # Clear previous response
                             (log_dir / "latest_response.txt").write_bytes(b"")
-                            logger.info(f"📝 Initialized response log at /tmp/codex_plus/chatgpt_responses/latest_response.txt")
+                            logger.info(
+                                "📝 Initialized response log at /tmp/codex_plus/chatgpt_responses/latest_response.txt"
+                            )
                         except Exception as e:
                             logger.warning(f"Failed to initialize response log: {e}")
 
-                    for chunk in response.iter_content(chunk_size=None):
-                        chunk_count += 1
-                        logger.info(f"📦 Received chunk #{chunk_count}, size={len(chunk) if chunk else 0}")
-                        if chunk:
-                            if is_cerebras:
-                                # Transform Cerebras SSE format to ChatGPT /responses format
-                                chunk_buffer += chunk
+                        for chunk in response.iter_content(chunk_size=None):
+                            chunk_count += 1
+                            logger.info(
+                                "📦 Received chunk",
+                                extra={"chunk_index": chunk_count, "size": len(chunk) if chunk else 0},
+                            )
+                            if not chunk:
+                                continue
 
-                                # Split on double newline (SSE event boundary)
-                                events = chunk_buffer.split(b'\n\n')
+                            try:
+                                log_dir = Path("/tmp/codex_plus/chatgpt_responses")
+                                log_dir.mkdir(parents=True, exist_ok=True)
+                                with open(log_dir / "latest_response.txt", "ab") as f:
+                                    f.write(chunk)
+                                logger.info("📝 Logged ChatGPT chunk", extra={"bytes": len(chunk)})
+                            except Exception as e:
+                                logger.warning(f"Failed to log response chunk: {e}")
 
-                                # Keep last incomplete event in buffer
-                                chunk_buffer = events[-1]
+                            yield chunk
+                    except Exception as e:
+                        logger.error(f"Error during streaming: {e}")
+                        if not response_closed:
+                            try:
+                                response.close()
+                                response_closed = True
+                            except Exception:
+                                pass
+                        raise
+                    finally:
+                        if not response_closed:
+                            try:
+                                response.close()
+                            except Exception:
+                                pass
+                        if hasattr(response, "_close_cm"):
+                            try:
+                                response._close_cm(None, None, None)
+                            except Exception:
+                                pass
 
-                                # Process complete events
-                                for event in events[:-1]:
-                                    if not event.strip():
-                                        continue
-
-                                    # Parse SSE event
-                                    logger.info(f"🔍 Raw Cerebras event: {event[:300]}")
-                                    lines = event.decode('utf-8', errors='ignore').strip().split('\n')
-                                    for line in lines:
-                                        if line.startswith('data: '):
-                                            data_str = line[6:]  # Remove 'data: ' prefix
-
-                                            if data_str == '[DONE]':
-                                                # Send completion event
-                                                completion = {
-                                                    "type": "response.completed",
-                                                    "response": {"status": "completed"}
-                                                }
-                                                yield f'data: {json.dumps(completion)}\n\n'.encode('utf-8')
-                                                continue
-
-                                            try:
-                                                chunk_data = json.loads(data_str)
-                                                choices = chunk_data.get('choices', [])
-
-                                                if choices:
-                                                    delta = choices[0].get('delta', {})
-
-                                                    # Send initial events on first delta (content OR tool_calls)
-                                                    if not sent_initial_events and (delta.get('content') or delta.get('tool_calls')):
-                                                        response_id = chunk_data.get('id', '')
-                                                        created = {
-                                                            "type": "response.created",
-                                                            "response": {
-                                                                "id": response_id,
-                                                                "status": "in_progress"
-                                                            }
-                                                        }
-                                                        yield f'data: {json.dumps(created)}\n\n'.encode('utf-8')
-                                                        logger.info(f"📝 Sent response.created event")
-
-                                                        # Determine item type based on delta content
-                                                        if delta.get('tool_calls'):
-                                                            # Extract function name and id from first tool call
-                                                            tool_call = delta['tool_calls'][0]
-                                                            function_name = tool_call.get('function', {}).get('name', 'unknown')
-                                                            call_id = tool_call.get('id', 'call_0')
-
-                                                            added = {
-                                                                "type": "response.output_item.added",
-                                                                "item": {
-                                                                    "id": call_id,
-                                                                    "type": "function_call",
-                                                                    "name": function_name,
-                                                                    "call_id": call_id,
-                                                                    "arguments": ""
-                                                                }
-                                                            }
-                                                            logger.info(f"📞 Sending function_call item: {function_name}")
-                                                        else:
-                                                            added = {
-                                                                "type": "response.output_item.added",
-                                                                "item": {
-                                                                    "id": "item_0",
-                                                                    "type": "message",
-                                                                    "role": "assistant",
-                                                                    "content": []
-                                                                }
-                                                            }
-                                                            logger.info(f"📝 Sending message item")
-
-                                                        yield f'data: {json.dumps(added)}\n\n'.encode('utf-8')
-                                                        sent_initial_events = True
-
-                                                    if 'content' in delta and delta['content']:
-                                                        # Transform content delta to ChatGPT format
-                                                        # Research shows: use response.output_text.delta with flat delta field
-                                                        transformed = {
-                                                            "type": "response.output_text.delta",
-                                                            "delta": delta['content']  # Flat string, not nested!
-                                                        }
-                                                        output = f'data: {json.dumps(transformed)}\n\n'.encode('utf-8')
-                                                        logger.info(f"✨ Sending content delta: {json.dumps(transformed)[:150]}")
-                                                        yield output
-
-                                                    elif 'tool_calls' in delta and delta['tool_calls']:
-                                                        # Transform tool call deltas to OpenAI Responses API format
-                                                        # Research shows: use response.function_call.arguments.delta
-                                                        for tool_call in delta['tool_calls']:
-                                                            function_data = tool_call.get('function', {})
-
-                                                            # Send function arguments as they stream
-                                                            if 'arguments' in function_data and function_data['arguments']:
-                                                                tool_delta = {
-                                                                    "type": "response.function_call.arguments.delta",
-                                                                    "delta": function_data['arguments']  # Flat string!
-                                                                }
-                                                                output = f'data: {json.dumps(tool_delta)}\n\n'.encode('utf-8')
-                                                                logger.info(f"🔧 Sending function_call.arguments.delta: {json.dumps(tool_delta)[:150]}")
-                                                                yield output
-
-                                                    elif choices[0].get('finish_reason'):
-                                                        # Send completion event with response ID
-                                                        completion = {
-                                                            "type": "response.completed",
-                                                            "response": {
-                                                                "id": response_id or chunk_data.get('id', ''),
-                                                                "status": "completed"
-                                                            }
-                                                        }
-                                                        output = f'data: {json.dumps(completion)}\n\n'.encode('utf-8')
-                                                        logger.info(f"✅ Yielding response.completed with ID: {response_id}")
-                                                        yield output
-                                                        # Send final empty line to signal stream end
-                                                        yield b'\n'
-                                                        logger.info(f"✅ Sent final newline to signal stream end")
-                                            except json.JSONDecodeError:
-                                                # Invalid JSON - skip this chunk
-                                                logger.warning(f"Failed to parse SSE chunk: {data_str[:100]}")
-                                                continue
-                            else:
-                                # ChatGPT path - log and pass through
-                                # Save chunks to file for analysis
-                                try:
-                                    log_dir = Path("/tmp/codex_plus/chatgpt_responses")
-                                    log_dir.mkdir(parents=True, exist_ok=True)
-
-                                    # Append to response log
-                                    with open(log_dir / "latest_response.txt", "ab") as f:
-                                        f.write(chunk)
-
-                                    logger.info(f"📝 Logged {len(chunk)} bytes to chatgpt_responses/latest_response.txt")
-                                except Exception as e:
-                                    logger.warning(f"Failed to log response chunk: {e}")
-
-                                yield chunk
-                except Exception as e:
-                    logger.error(f"Error during streaming: {e}")
-                    # Ensure response is closed on error
-                    if not response_closed:
-                        try:
-                            response.close()
-                            # Note: httpx client is persistent - do not close it
-                            response_closed = True
-                        except:
-                            pass
-                    raise
-                finally:
-                    # Ensure response is always closed
-                    if not response_closed:
-                        try:
-                            response.close()
-                            # Note: httpx client is persistent - do not close it
-                        except:
-                            pass
-                    if hasattr(response, "_close_cm"):
-                        try:
-                            response._close_cm(None, None, None)
-                        except Exception:
-                            pass
-            
+                stream_source = stream_response()
             # Get response headers - ONLY forward essential SSE headers
             # Strip all upstream-specific headers (Cloudflare, Cerebras, etc.)
             upstream_headers = dict(response.headers)
@@ -728,7 +757,7 @@ BEGIN EXECUTION NOW:
 
             # Create streaming response with automatic cleanup tracking
             streaming_response = StreamingResponse(
-                stream_response(),
+                stream_source,
                 status_code=response.status_code,
                 headers=resp_headers,
                 media_type=resp_headers.get("content-type", "text/event-stream")
