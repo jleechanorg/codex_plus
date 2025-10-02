@@ -46,6 +46,8 @@ CRONTAB_ENTRY="@reboot cd $SCRIPT_DIR && ./proxy.sh enable"
 PROVIDER_MODE="openai"
 FORCE_RESTART="false"
 DEFAULT_UPSTREAM_URL="https://chatgpt.com/backend-api/codex"
+# Port configuration - default 10000 for Codex compatibility, can override with PROXY_PORT
+PROXY_PORT="${PROXY_PORT:-10000}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -197,8 +199,8 @@ print_status() {
         local pid=$(cat "$PID_FILE" 2>/dev/null)
         if validate_pid "$pid"; then
             echo -e "  ${GREEN}✅ Running${NC} (PID: $pid)"
-            echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
-            echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
+            echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:$PROXY_PORT"
+            echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:$PROXY_PORT/health"
             echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
             if [ -f "$RUNTIME_DIR/provider.mode" ]; then
                 local provider
@@ -361,13 +363,15 @@ start_proxy() {
     # Export provider environment variables to proxy process
     CODEX_PLUS_UPSTREAM_URL="$CODEX_PLUS_UPSTREAM_URL" \
     CODEX_PLUS_PROVIDER_MODE="$CODEX_PLUS_PROVIDER_MODE" \
+    PROXY_PORT="$PROXY_PORT" \
     nohup python -c "
 import sys, os
 try:
     from codex_plus.$PROXY_MODULE import app
     import uvicorn
-    # 🔒 PROTECTED: Port 10000 required for Codex compatibility
-    uvicorn.run(app, host='127.0.0.1', port=10000, log_level='info')
+    # 🔒 PROTECTED: Port configurable via PROXY_PORT (default 10000 for Codex compatibility)
+    port = int(os.environ.get('PROXY_PORT', 10000))
+    uvicorn.run(app, host='127.0.0.1', port=port, log_level='info')
 except Exception as e:
     print(f'STARTUP_ERROR: {e}', file=sys.stderr)
     sys.exit(1)
@@ -383,7 +387,7 @@ except Exception as e:
         sleep 1
         if validate_pid "$pid"; then
             # Additional check: verify the service is actually responding
-            if curl -s -f http://localhost:10000/health >/dev/null 2>&1; then
+            if curl -s -f "http://localhost:$PROXY_PORT/health" >/dev/null 2>&1; then
                 startup_success=true
                 break
             elif [ $i -eq $((startup_timeout-1)) ]; then
@@ -402,8 +406,8 @@ except Exception as e:
         # Show status without cleanup to avoid killing the just-started process
         echo -e "${BLUE}🔍 M1 Proxy Status:${NC}"
         echo -e "  ${GREEN}✅ Running${NC} (PID: $pid)"
-        echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
-        echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
+        echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:$PROXY_PORT"
+        echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:$PROXY_PORT/health"
         echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
         # Check both environment variable and persisted file for logging mode
         if [ -f "$RUNTIME_DIR/logging.mode" ] || [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
@@ -685,7 +689,7 @@ show_help() {
     echo "  $0 status                                    # Check status"
     echo "  $0 --cerebras                                # Start proxy using Cerebras environment"
     echo "  $0 --cerebras enable                          # Equivalent explicit command"
-    echo "  OPENAI_BASE_URL=http://localhost:10000 codex  # Use with codex"
+    echo "  OPENAI_BASE_URL=http://localhost:$PROXY_PORT codex  # Use with codex"
     echo "  $0 disable                                   # Stop proxy"
 }
 
