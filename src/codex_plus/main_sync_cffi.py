@@ -40,6 +40,7 @@ import sys
 import os
 import time
 import re
+import copy
 from urllib.parse import urlparse
 from .status_line_middleware import HookMiddleware
 
@@ -186,8 +187,14 @@ async def proxy(request: Request, path: str):
     if body and path == "responses":
         try:
             body_dict = _json.loads(body)
+            original_body_snapshot = copy.deepcopy(body_dict)
             modified = await process_pre_input_hooks(request, body_dict)
-            if modified != body_dict:
+
+            # Hooks may mutate the provided body in place or return a new object
+            if modified is None:
+                modified = body_dict
+
+            if modified != original_body_snapshot:
                 # stash modified body for downstream middleware
                 try:
                     request.state.modified_body = _json.dumps(modified).encode('utf-8')
