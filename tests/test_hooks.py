@@ -1,15 +1,12 @@
-import asyncio
-import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, Mock, patch
+from typing import Any, Dict, List
+from unittest.mock import Mock
 
 import pytest
 import yaml
-from fastapi import FastAPI, Request, Response
-from fastapi.testclient import TestClient
+from fastapi import Request
 
 # Assuming the hook system implementation (to be tested)
 class Hook:

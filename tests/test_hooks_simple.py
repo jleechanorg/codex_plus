@@ -3,7 +3,6 @@
 Simple test to verify hooks work with smaller payloads
 """
 import requests
-import json
 import os
 from unittest.mock import patch, Mock
 

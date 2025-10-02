@@ -1,0 +1,18 @@
+{
+  "id": "doc-writer",
+  "name": "Documentation Agent",
+  "description": "Creates and maintains documentation",
+  "capabilities": [
+    "documentation",
+    "read_files",
+    "write_files"
+  ],
+  "config": {
+    "formats": [
+      "markdown",
+      "rst",
+      "html"
+    ],
+    "auto_generate": true
+  }
+}

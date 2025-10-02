@@ -1,0 +1,41 @@
+{
+  "thresholds": {
+    "coordination_overhead_warning_ms": 200.0,
+    "coordination_overhead_critical_ms": 300.0,
+    "coordination_overhead_max_acceptable_ms": 400.0,
+    "task_execution_warning_ms": 1000.0,
+    "task_execution_critical_ms": 2000.0,
+    "agent_init_warning_ms": 50.0,
+    "agent_init_critical_ms": 100.0,
+    "memory_warning_mb": 512.0,
+    "memory_critical_mb": 1024.0,
+    "coordination_variance_threshold": 50.0
+  },
+  "baseline": {
+    "measurement_period_hours": 0.5,
+    "min_samples_for_baseline": 20,
+    "confidence_interval": 0.95,
+    "auto_update_baseline": true,
+    "update_frequency_hours": 2.0,
+    "baseline_retention_days": 30,
+    "min_success_rate": 0.9,
+    "max_variance_coefficient": 0.5
+  },
+  "monitoring": {
+    "enabled": true,
+    "real_time_monitoring": true,
+    "background_monitoring": true,
+    "max_metrics_in_memory": 10000,
+    "metric_retention_hours": 24.0,
+    "aggregation_window_minutes": 1,
+    "storage_dir": ".codexplus/performance",
+    "export_metrics_to_file": true,
+    "export_frequency_minutes": 5,
+    "enable_threshold_alerts": true,
+    "enable_performance_degradation_alerts": true,
+    "alert_cooldown_minutes": 10,
+    "ci_export_enabled": true,
+    "ci_export_file": "performance_metrics.json",
+    "ci_fail_on_threshold_violation": true
+  }
+}

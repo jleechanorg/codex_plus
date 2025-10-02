@@ -1,0 +1,19 @@
+{
+  "id": "refactor-agent",
+  "name": "Refactoring Agent",
+  "description": "Refactors code for better structure and performance",
+  "capabilities": [
+    "refactoring",
+    "code_analysis",
+    "read_files",
+    "write_files"
+  ],
+  "config": {
+    "patterns": [
+      "solid",
+      "dry",
+      "kiss"
+    ],
+    "preserve_behavior": true
+  }
+}

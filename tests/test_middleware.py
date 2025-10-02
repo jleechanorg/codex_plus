@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import requests
-import json
 
 # Test the middleware
 url = "http://localhost:3000/v1/chat/completions"

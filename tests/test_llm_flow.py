@@ -4,9 +4,6 @@ Test the full LLM execution flow
 Tests slash command processing through the middleware
 """
 import pytest
-import json
-import asyncio
-from unittest.mock import Mock, AsyncMock
 from codex_plus.llm_execution_middleware import LLMExecutionMiddleware
 
 

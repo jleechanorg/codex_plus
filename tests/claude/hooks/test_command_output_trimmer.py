@@ -10,8 +10,7 @@ import sys
 import json
 import tempfile
 import unittest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Use pytest.importorskip to handle missing command_output_trimmer module gracefully during collection
 import pytest
@@ -169,6 +168,7 @@ class TestCommandOutputTrimmer(unittest.TestCase):
         
         # Should compress git operations
         git_ops = [line for line in compressed if 'Enumerating' in line or 'Delta compression' in line]
+        self.assertLessEqual(len(git_ops), 2, 'Should collapse repeated git operation lines')
         if len([line for line in pushl_lines if 'Enumerating' in line or 'Delta compression' in line]) > 2:
             compression_indicator = [line for line in compressed if 'compressed' in line]
             self.assertTrue(len(compression_indicator) >= 1, "Should compress verbose git operations")

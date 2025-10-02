@@ -4,7 +4,6 @@ Test script for LLM execution middleware
 Tests whether instructing the LLM to execute commands works better than expanding them
 """
 import pytest
-import json
 import copy
 from codex_plus.llm_execution_middleware import LLMExecutionMiddleware
 

@@ -2,7 +2,6 @@
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, Mock
-import json
 
 # Import the proxy app (to be created)
 from codex_plus.main import app
@@ -146,7 +145,7 @@ class TestSecurityValidation:
         if response.status_code == 400 and response.headers.get("content-type", "").startswith("application/json"):
             try:
                 assert "Invalid request path" in response.json().get("error", "")
-            except:
+            except Exception:
                 pass  # Error format may vary
 
     @pytest.mark.parametrize("malicious_path,blocked_status_codes", [
@@ -165,7 +164,7 @@ class TestSecurityValidation:
         if response.status_code == 400 and response.headers.get("content-type", "").startswith("application/json"):
             try:
                 assert "Access to internal resources denied" in response.json().get("error", "")
-            except:
+            except Exception:
                 pass  # Error format may vary
 
     def test_oversized_request_prevention(self):
@@ -223,15 +222,15 @@ class TestSecurityValidation:
         from codex_plus.main_sync_cffi import _validate_upstream_url
 
         # Valid URLs
-        assert _validate_upstream_url("https://chatgpt.com/backend-api/codex") == True
-        assert _validate_upstream_url("https://chatgpt.com/backend-api/other") == True
+        assert _validate_upstream_url("https://chatgpt.com/backend-api/codex")
+        assert _validate_upstream_url("https://chatgpt.com/backend-api/other")
 
         # Invalid URLs
-        assert _validate_upstream_url("http://chatgpt.com/backend-api/codex") == False  # HTTP not HTTPS
-        assert _validate_upstream_url("https://malicious.com/backend-api/codex") == False  # Wrong domain
-        assert _validate_upstream_url("https://chatgpt.com/other-api/codex") == False  # Wrong path
-        assert _validate_upstream_url("ftp://chatgpt.com/backend-api/codex") == False  # Wrong protocol
-        assert _validate_upstream_url("invalid-url") == False  # Malformed URL
+        assert not _validate_upstream_url("http://chatgpt.com/backend-api/codex")  # HTTP not HTTPS
+        assert not _validate_upstream_url("https://malicious.com/backend-api/codex")  # Wrong domain
+        assert not _validate_upstream_url("https://chatgpt.com/other-api/codex")  # Wrong path
+        assert not _validate_upstream_url("ftp://chatgpt.com/backend-api/codex")  # Wrong protocol
+        assert not _validate_upstream_url("invalid-url")  # Malformed URL
 
 
 # Test Matrix 6: Edge Cases and Error Handling
@@ -257,7 +256,6 @@ class TestEdgeCases:
     def test_concurrent_request_handling(self):
         """Test that concurrent requests are handled properly"""
         import threading
-        import time
 
         results = []
 
