@@ -4,6 +4,7 @@ Request logging utilities for debugging and monitoring
 import json
 import logging
 import asyncio
+import inspect
 import aiofiles
 from pathlib import Path
 from typing import Optional
@@ -22,12 +23,42 @@ class RequestLogger:
 
         try:
             # Schedule async logging without blocking
+            def _close_if_pending(coro) -> None:
+                """Close coroutine if it wasn't scheduled/awaited (e.g., mocked loop)."""
+                if inspect.iscoroutine(coro) and hasattr(coro, "close"):
+                    try:
+                        coro.close()
+                    except RuntimeError:
+                        # Coroutine already executed; nothing to clean up
+                        pass
+
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(RequestLogger._log_payload_to_file_async(body))
             except RuntimeError:
                 # No running event loop, run the coroutine to completion
-                asyncio.run(RequestLogger._log_payload_to_file_async(body))
+                coroutine = RequestLogger._log_payload_to_file_async(body)
+                try:
+                    asyncio.run(coroutine)
+                finally:
+                    _close_if_pending(coroutine)
+            else:
+                coroutine = RequestLogger._log_payload_to_file_async(body)
+                try:
+                    task = loop.create_task(coroutine)
+                except Exception:
+                    _close_if_pending(coroutine)
+                    raise
+
+                # When the event loop is mocked in tests, create_task may return a MagicMock or coroutine.
+                if not isinstance(task, asyncio.Task):
+                    _close_if_pending(coroutine)
+
+                    # AsyncMock returns a coroutine object; close it so tests don't emit warnings.
+                    if inspect.iscoroutine(task) and hasattr(task, "close"):
+                        try:
+                            task.close()
+                        except RuntimeError:
+                            pass
         except Exception as e:
             logger.error(f"Failed to log request payload: {e}")
 
@@ -35,15 +66,22 @@ class RequestLogger:
     async def _log_payload_to_file_async(body: bytes) -> None:
         """Log payload to branch-specific directory asynchronously"""
         # Get current git branch name asynchronously
+        communicate_coro = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 "git", "rev-parse", "--abbrev-ref", "HEAD",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+            communicate_coro = proc.communicate()
+            stdout, _ = await asyncio.wait_for(communicate_coro, timeout=3.0)
             branch = stdout.decode().strip() if stdout else "unknown"
         except Exception:
+            if inspect.iscoroutine(communicate_coro) and hasattr(communicate_coro, "close"):
+                try:
+                    communicate_coro.close()
+                except RuntimeError:
+                    pass
             branch = "unknown"
 
         # Validate branch name to prevent path traversal
