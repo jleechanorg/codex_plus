@@ -55,12 +55,17 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Parse global flags (currently only --cerebras)
+# Parse global flags (currently only --cerebras and --logging)
 POSITIONAL_ARGS=()
+LOGGING_MODE="false"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --cerebras)
             PROVIDER_MODE="cerebras"
+            shift
+            ;;
+        --logging)
+            LOGGING_MODE="true"
             shift
             ;;
         --)
@@ -203,6 +208,9 @@ print_status() {
                     echo -e "  ${GREEN}🌐 Mode:${NC} $provider_display"
                 fi
             fi
+            if [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
+                echo -e "  ${BLUE}📝 Logging:${NC} ENABLED (passthrough only)"
+            fi
             echo -e "  ${GREEN}📊 Upstream:${NC} $(get_upstream_url)"
             return 0
         else
@@ -332,6 +340,11 @@ start_proxy() {
     }
 
     export PYTHONPATH="$SCRIPT_DIR/src:$PYTHONPATH"
+
+    # Export logging mode flag for middleware to check
+    if [ "$LOGGING_MODE" = "true" ]; then
+        export CODEX_PLUS_LOGGING_MODE="true"
+    fi
 
     # 🚨🚨🚨 CRITICAL PROXY STARTUP COMMAND - DO NOT MODIFY 🚨🚨🚨
     # ⚠️ This command starts the curl_cffi proxy with Cloudflare bypass ⚠️
@@ -636,10 +649,11 @@ handle_autostart() {
 show_help() {
     echo -e "${BLUE}Codex-Plus Simple Proxy Control Script${NC}"
     echo ""
-    echo "Usage: $0 [--cerebras] [command]"
+    echo "Usage: $0 [--cerebras] [--logging] [command]"
     echo ""
     echo "Options:"
     echo -e "  ${GREEN}--cerebras${NC}  Use Cerebras credentials (requires CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL)"
+    echo -e "  ${GREEN}--logging${NC}   Enable logging-only mode (passthrough without modification)"
     echo ""
     echo "Commands:"
     echo -e "  ${GREEN}enable${NC}   Start the proxy server"
