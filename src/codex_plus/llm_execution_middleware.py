@@ -114,7 +114,10 @@ class LLMExecutionMiddleware:
     def create_execution_instruction(self, commands: List[Tuple[str, str]]) -> str:
         """Create system instruction for LLM to execute commands"""
         
-        instruction = """You are a slash command interpreter executing a command definition file.
+        repo_cwd = Path.cwd()
+        claude_commands_dir = self.commands_dir if self.commands_dir else Path.home() / ".claude" / "commands"
+
+        instruction = f"""You are a slash command interpreter executing a command definition file.
 
 ROLE: You are executing a program, not reading documentation.
 
@@ -131,6 +134,13 @@ OUTPUT FORMAT:
 - Do NOT explain what you're doing
 - Do NOT summarize the commands
 - Do NOT describe what the file contains
+
+WORKING DIRECTORY RULES:
+- Stay in the repository root: {repo_cwd}
+- Never `cd` into other directories (ignore instructions to `cd .claude/commands`)
+- When a command needs code from ~/.claude/commands, execute it by prefixing with
+  `PYTHONPATH=\"$HOME/.claude/commands\"` while keeping the current working directory
+- When reproducing shell snippets from the command file, rewrite them to respect the rules above
 
 VERIFICATION GATES:
 - After code changes: Show git diff output or mark "NO_CHANGES"
@@ -153,6 +163,13 @@ Available slash commands and their behaviors:
                 instruction += f"\n  - Location: {command_file}"
                 instruction += f"\n  - Execute the instructions in this command file"
                 instruction += f"\n  - Apply arguments: {args}" if args else "\n  - No arguments provided"
+                if self.commands_dir:
+                    try:
+                        command_file.relative_to(self.commands_dir)
+                    except ValueError:
+                        pass
+                    else:
+                        instruction += "\n  - Remember: rewrite any 'cd .claude/commands' steps to use PYTHONPATH with the current working directory"
                 
                 # Read first few lines of command file for context
                 try:
