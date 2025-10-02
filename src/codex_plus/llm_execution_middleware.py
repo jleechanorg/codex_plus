@@ -547,6 +547,17 @@ BEGIN EXECUTION NOW:
                         "🔍 Cerebras response status",
                         extra={"status": response.status_code, "headers": dict(response.headers)},
                     )
+
+                    # Initialize Cerebras response log file
+                    try:
+                        log_dir = Path("/tmp/codex_plus/cerebras_responses")
+                        log_dir.mkdir(parents=True, exist_ok=True)
+                        # Clear previous response
+                        (log_dir / "latest_response.txt").write_bytes(b"")
+                        logger.info("📝 Initialized Cerebras response log at /tmp/codex_plus/cerebras_responses/latest_response.txt")
+                    except Exception as e:
+                        logger.warning(f"Failed to initialize Cerebras response log: {e}")
+
                     chunk_count = 0
                     try:
                         async for chunk in response.aiter_bytes():
@@ -557,6 +568,15 @@ BEGIN EXECUTION NOW:
                             )
                             if not chunk:
                                 continue
+
+                            # Log raw Cerebras SSE chunk
+                            try:
+                                log_dir = Path("/tmp/codex_plus/cerebras_responses")
+                                with open(log_dir / "latest_response.txt", "ab") as f:
+                                    f.write(chunk)
+                                logger.info("📝 Logged Cerebras chunk", extra={"bytes": len(chunk)})
+                            except Exception as e:
+                                logger.warning(f"Failed to log Cerebras response chunk: {e}")
 
                             chunk_buffer += chunk
                             events = chunk_buffer.split(b"\n\n")
