@@ -123,7 +123,9 @@ class TestDualHTTPClient:
             mock_client.stream.return_value = DummyStream(DummyResponse([b'{"response": "test"}\n']))
             mock_client_cls.return_value = mock_client
 
-            with patch.dict('os.environ', {'OPENAI_API_KEY': 'test_key'}, clear=False):
+            # Clear CEREBRAS_API_KEY to ensure OPENAI_API_KEY is used
+            env_vars = {'OPENAI_API_KEY': 'test_key', 'CEREBRAS_API_KEY': ''}
+            with patch.dict('os.environ', env_vars, clear=False):
                 response = await middleware.process_request(request, "responses")
 
             mock_client.stream.assert_called_once()
@@ -218,7 +220,9 @@ class TestDualHTTPClient:
             mock_client.stream.return_value = DummyStream(DummyResponse([b'{"response": "test"}\n']))
             mock_client_cls.return_value = mock_client
 
-            with patch.dict('os.environ', {'OPENAI_API_KEY': test_api_key}, clear=False):
+            # Clear CEREBRAS_API_KEY to ensure OPENAI_API_KEY is used
+            env_vars = {'OPENAI_API_KEY': test_api_key, 'CEREBRAS_API_KEY': ''}
+            with patch.dict('os.environ', env_vars, clear=False):
                 response = await middleware.process_request(request, "responses")
 
             headers = mock_client.stream.call_args.kwargs["headers"]
