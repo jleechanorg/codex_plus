@@ -348,19 +348,20 @@ BEGIN EXECUTION NOW:
             logger.info("📝 Logging mode enabled - forwarding request without modification")
 
         # In logging mode, always use original body; otherwise check for hook modifications
-        # Starlette's request.state stores explicit attributes in __dict__, so guard against
-        # Mock objects that auto-create attributes during tests.
-        state_dict = getattr(request.state, "__dict__", {})
         if logging_mode:
             body = await request.body()
-        elif "modified_body" in state_dict:
-            body = state_dict["modified_body"]
-            if isinstance(body, str):
-                body = body.encode("utf-8")
-            logger.info("Using modified body from pre-input hooks")
         else:
-            body = await request.body()
+            modified_body = getattr(request.state, "modified_body", None)
+            if modified_body is not None:
+                body = modified_body
+                if isinstance(body, str):
+                    body = body.encode("utf-8")
+                logger.info("Using modified body from pre-input hooks")
+            else:
+                body = await request.body()
         headers = raw_headers
+
+        cached_upstream_url: Optional[str] = None
 
         # Only process if we have a JSON body and logging mode is NOT enabled
         if body and not logging_mode:
@@ -371,6 +372,7 @@ BEGIN EXECUTION NOW:
 
                 # Get upstream URL dynamically
                 upstream_url = self.url_getter()
+                cached_upstream_url = upstream_url
                 logger.info(f"📡 Using upstream URL: {upstream_url}")
 
                 # Apply Cerebras transformation if needed
@@ -398,10 +400,12 @@ BEGIN EXECUTION NOW:
             except json.JSONDecodeError:
                 logger.warning("Could not parse body as JSON, forwarding as-is")
             except Exception as e:
-                logger.error(f"Error processing request: {e}")
+                logger.exception(f"Error processing request: {e}")
 
         # Forward to upstream - get URL dynamically
-        upstream_url = self.url_getter()
+        if cached_upstream_url is None:
+            cached_upstream_url = self.url_getter()
+        upstream_url = cached_upstream_url
         target_url = f"{upstream_url}/{path.lstrip('/')}"
 
         # Validate upstream URL using security function
