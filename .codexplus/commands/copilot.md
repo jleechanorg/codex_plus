@@ -113,15 +113,16 @@ Use this command when a pull request already exists and Codex needs to process r
    ```
    Add or edit entries per comment before posting.
 5. Optionally auto-post replies when Codex-compatible tooling is available:
-   - **Repo script available:**
-     ```bash
-     if [ -f scripts/commentreply.py ]; then
-       OWNER=$(gh repo view --json owner --jq '.owner.login')
-       REPO=$(gh repo view --json name --jq '.name')
-       PR_NUMBER=${PR_NUMBER:-$(gh pr view --json number --jq '.number')}
-       python scripts/commentreply.py --owner "$OWNER" --repo "$REPO" --pr "$PR_NUMBER" --input "$RESPONSES_JSON"
-     fi
-     ```
+  - **Repo script available:**
+    ```bash
+    REPLY_SCRIPT=${REPLY_SCRIPT:-scripts/commentreply.py}
+    if [ -f "$REPLY_SCRIPT" ]; then
+      OWNER=$(gh repo view --json owner --jq '.owner.login')
+      REPO=$(gh repo view --json name --jq '.name')
+      PR_NUMBER=${PR_NUMBER:-$(gh pr view --json number --jq '.number')}
+      python "$REPLY_SCRIPT" --owner "$OWNER" --repo "$REPO" --pr "$PR_NUMBER" --input "$RESPONSES_JSON"
+    fi
+    ```
    - **No automation:** fall back to manual posting via `gh api` (document the limitation in `OPERATIONS_LOG` and in the final summary).
    Review any tool output for success indicators and capture URLs in `OPERATIONS_LOG`.
 6. Flag any comments that need escalation or reviewer clarification.
@@ -141,7 +142,7 @@ Comment Summary (stored in $WORK_DIR/triage.md within /tmp/${REPO_NAME}__${CURRE
 
 Actions
 - ✅ Added language hint to Expected Output Skeleton (.codexplus/commands/copilot.md:92)
-- ✅ Posted replies via scripts/commentreply.py (see OPERATIONS_LOG URLs)
+- ✅ Posted replies via repository reply script (see OPERATIONS_LOG URLs)
 - ✅ pytest -q (pass)
 
 Draft Replies (see $WORK_DIR/replies.md within /tmp/${REPO_NAME}__${CURRENT_BRANCH})
@@ -159,7 +160,7 @@ Metrics
 - Files touched: 4
 - Tests: pytest -q (pass)
 - Coverage: 5/6 actionable (83%)
-- Auto-post: scripts/commentreply.py ✅
+- Auto-post: repository reply script ✅
 
 Next Steps
 - sanity-check posted replies on GitHub
