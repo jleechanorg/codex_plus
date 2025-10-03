@@ -357,17 +357,20 @@ BEGIN EXECUTION NOW:
             logger.info("📝 Logging mode enabled - forwarding request without modification")
 
         # In logging mode, always use original body; otherwise check for hook modifications
+        # Starlette's request.state stores attributes in _state dict
+        state_dict = getattr(request.state, "_state", {}) if hasattr(request, 'state') else {}
+        logger.debug(f"Middleware state: logging_mode={logging_mode}, has_modified_body={'modified_body' in state_dict}, state_dict_keys={list(state_dict.keys())}")
         if logging_mode:
             body = await request.body()
+            logger.debug("Using original body (logging mode)")
+        elif "modified_body" in state_dict:
+            body = state_dict["modified_body"]
+            if isinstance(body, str):
+                body = body.encode("utf-8")
+            logger.info("Using modified body from pre-input hooks")
         else:
-            modified_body = getattr(request.state, "modified_body", None)
-            if modified_body is not None:
-                body = modified_body
-                if isinstance(body, str):
-                    body = body.encode("utf-8")
-                logger.info("Using modified body from pre-input hooks")
-            else:
-                body = await request.body()
+            body = await request.body()
+            logger.debug("Using original body (no modifications)")
         headers = raw_headers
 
         cached_upstream_url: Optional[str] = None

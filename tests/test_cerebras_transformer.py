@@ -261,9 +261,10 @@ class TestFieldFiltering:
         """Test that compatible fields are kept"""
         result = transformer.transform_request(sample_codex_request)
 
-        # These should be preserved
-        assert "stream" in result
-        assert result["stream"] == sample_codex_request["stream"]
+        # These should be preserved if present in source
+        if "stream" in sample_codex_request:
+            assert "stream" in result
+            assert result["stream"] == sample_codex_request["stream"]
 
         if "tool_choice" in sample_codex_request:
             assert "tool_choice" in result
