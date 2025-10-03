@@ -40,7 +40,6 @@ import sys
 import os
 import time
 import re
-import copy
 from urllib.parse import urlparse
 from .status_line_middleware import HookMiddleware
 

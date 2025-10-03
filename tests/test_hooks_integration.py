@@ -16,7 +16,7 @@ def write_hook(dir_path: Path, name: str, body: str) -> Path:
     return p
 
 
-def test_pre_input_hook_modifies_upstream_body(tmp_path):
+def test_pre_input_hook_modifies_upstream_body():
     # Arrange: create a pre-input hook that injects a marker into the body
     hooks_dir = Path(".codexplus/hooks")
     hook_code = """---
@@ -82,7 +82,7 @@ hook = InjectMarker('inject-marker', {'type':'pre-input','priority':10,'enabled'
             pass
 
 
-def test_pre_input_hook_nested_mutation_propagates(tmp_path):
+def test_pre_input_hook_nested_mutation_propagates():
     from codex_plus import main_sync_cffi
 
     # Ensure the middleware creates a fresh session so our patch applies
