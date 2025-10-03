@@ -160,6 +160,7 @@ hook = MutateNested('mutate-nested', {'type': 'pre-input', 'priority': 5, 'enabl
             }
             r = client.post("/responses", json=payload)
             assert r.status_code == 200
+            # Positional args are unused; the request payload lives in kwargs.
             _args, kwargs = mock_session.request.call_args
             sent_body = kwargs.get("data")
             assert isinstance(sent_body, (bytes, bytearray))
