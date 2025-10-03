@@ -61,9 +61,18 @@ class LLMExecutionMiddleware:
             upstream_url: Static upstream URL (legacy support)
             url_getter: Callable that returns upstream URL (allows dynamic config)
         """
+        self.upstream_url: Optional[str]
+
         if url_getter:
             self.url_getter = url_getter
+            try:
+                # Best-effort capture of the current value for backward compatibility tests
+                self.upstream_url = self.url_getter()
+            except Exception:
+                # Dynamic getters may rely on runtime state; defer resolution until later
+                self.upstream_url = None
         elif upstream_url:
+            self.upstream_url = upstream_url
             self.url_getter = lambda: upstream_url
         else:
             raise ValueError("Must provide either upstream_url or url_getter")
@@ -372,6 +381,7 @@ BEGIN EXECUTION NOW:
 
                 # Get upstream URL dynamically
                 upstream_url = self.url_getter()
+                self.upstream_url = upstream_url
                 cached_upstream_url = upstream_url
                 logger.info(f"📡 Using upstream URL: {upstream_url}")
 
@@ -399,12 +409,13 @@ BEGIN EXECUTION NOW:
 
             except json.JSONDecodeError:
                 logger.warning("Could not parse body as JSON, forwarding as-is")
-            except Exception as e:
-                logger.exception(f"Error processing request: {e}")
+            except Exception:
+                logger.exception("Error processing request")
 
         # Forward to upstream - get URL dynamically
         if cached_upstream_url is None:
             cached_upstream_url = self.url_getter()
+            self.upstream_url = cached_upstream_url
         upstream_url = cached_upstream_url
         target_url = f"{upstream_url}/{path.lstrip('/')}"
 
