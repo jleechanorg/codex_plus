@@ -52,14 +52,14 @@ Use this command when a pull request already exists and Codex needs to process r
 - **Manual input:** ask the user to supply comments via scratch file; store them in `COMMENTS_JSON` using `cat <<'EOF'`.
 - Validate JSON with `jq empty "$COMMENTS_JSON"`; abort gracefully if parsing fails.
 
-## Phase 3 – Analyse & Prioritise
+## Phase 3 – Analyze & Prioritize
 1. Derive actionable entries with `jq` and write them to `TRIAGE_MD` as a markdown bullet list, one per comment, e.g. `- [blocking] path/to/file.py:120 (alice) – ensure auth middleware handles 401`. Include the `comment_id` and linkable context where helpful.
 2. Sort the list by severity using a cautious heuristic:
    - Mentions of "security", "failing", "bug", or similar high-risk keywords ⇒ **blocking**
    - Questions about security, correctness, or stability (e.g., "Is this safe?", "Could this leak data?", "Does this handle errors?") ⇒ **blocking**
    - Other questions (e.g., "Why did you choose this approach?", "Can this be simplified?") ⇒ **follow-up**
    - Style or minor wording items ⇒ **nit**
-   - When ambiguous, err on the side of caution and categorise as **blocking** if it could impact functionality or safety. Example: "Should we validate user input here?" ⇒ **blocking**
+   - When ambiguous, err on the side of caution and categorize as **blocking** if it could impact functionality or safety. Example: "Should we validate user input here?" ⇒ **blocking**
 3. Count totals (overall, actionable, already replied) and log them to `OPERATIONS_LOG` with timestamps.
 4. Produce a work plan grouping comments by file or subsystem. Highlight dependencies (e.g., “update fixture before fixing tests”).
 
@@ -128,7 +128,7 @@ Use this command when a pull request already exists and Codex needs to process r
 6. Flag any comments that need escalation or reviewer clarification.
 
 ## Phase 7 – Wrap Up & Handoff
-- Summarise key metrics: execution duration (`$(date +%s) - START_TIME`), files touched, tests run, response coverage.
+- Summarize key metrics: execution duration (`$(date +%s) - START_TIME`), files touched, tests run, response coverage.
 - Provide next steps for the user (e.g., `git commit`, push, paste replies in GitHub UI).
 - Remind the user to inspect and then remove `WORK_DIR` (and clean up `/tmp/${REPO_NAME}__${CURRENT_BRANCH}` if empty) unless they wish to archive it.
 
@@ -138,7 +138,7 @@ Source: <gh api | local export | manual>
 
 Comment Summary (stored in $WORK_DIR/triage.md within /tmp/${REPO_NAME}__${CURRENT_BRANCH})
 - [blocking] path/to/file.py:120 (alice) – ensure auth middleware handles 401...
-- [follow-up] docs/update.md:45 (reviewer) – clarify CLI flag behaviour
+- [follow-up] docs/update.md:45 (reviewer) – clarify CLI flag behavior
 
 Actions
 - ✅ Added language hint to Expected Output Skeleton (.codexplus/commands/copilot.md:92)
@@ -150,7 +150,7 @@ Draft Replies (see $WORK_DIR/replies.md within /tmp/${REPO_NAME}__${CURRENT_BRAN
    - Status: resolved
    - Action Taken: Updated middleware guard and added regression test.
    - Evidence: pytest -k auth_guard (pass)
-2. [AI responder] Confirmed CLI flag behaviour remains unchanged.
+2. [AI responder] Confirmed CLI flag behavior remains unchanged.
    - Status: resolved
    - Action Taken: Clarified docs and added assertion.
    - Evidence: pytest -k cli_flags (pass)
