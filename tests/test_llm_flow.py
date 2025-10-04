@@ -60,7 +60,7 @@ class TestLLMExecutionFlow:
 
     def test_middleware_initialization(self, middleware):
         """Test that middleware initializes correctly"""
-        assert middleware.upstream_url == "https://chatgpt.com/backend-api/codex"
+        assert middleware.url_getter() == "https://chatgpt.com/backend-api/codex"
         assert hasattr(middleware, 'detect_slash_commands')
         assert hasattr(middleware, 'process_request')
 

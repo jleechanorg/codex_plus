@@ -33,10 +33,11 @@ VENV_PATH="$SCRIPT_DIR/venv"
 PROXY_MODULE="main_sync_cffi"
 # Runtime files under /tmp/codex_plus
 RUNTIME_DIR="/tmp/codex_plus"
-PID_FILE="$RUNTIME_DIR/proxy.pid"
-LOG_FILE="$RUNTIME_DIR/proxy.log"
-LOCK_FILE="$RUNTIME_DIR/proxy.lock"
-BASE_URL_FILE="$RUNTIME_DIR/provider.base_url"
+# Port configuration must be set before PID file paths
+PROXY_PORT="${PROXY_PORT:-10000}"
+PID_FILE="$RUNTIME_DIR/proxy_${PROXY_PORT}.pid"
+LOG_FILE="$RUNTIME_DIR/proxy_${PROXY_PORT}.log"
+LOCK_FILE="$RUNTIME_DIR/proxy_${PROXY_PORT}.lock"
 # Autostart configuration
 AUTOSTART_LABEL="com.codex.plus.proxy"
 LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
@@ -129,28 +130,25 @@ configure_provider_environment() {
         fi
 
         export CODEX_PLUS_PROVIDER_MODE="cerebras"
+        export CODEX_PLUS_UPSTREAM_URL="$CEREBRAS_BASE_URL"
         export OPENAI_API_KEY="$CEREBRAS_API_KEY"
         export OPENAI_BASE_URL="$CEREBRAS_BASE_URL"
         export OPENAI_MODEL="$CEREBRAS_MODEL"
-        printf '%s\n' "$CEREBRAS_BASE_URL" > "$BASE_URL_FILE"
         echo -e "${BLUE}🌐 Cerebras mode enabled - proxy will use Cerebras credentials${NC}"
     else
         export CODEX_PLUS_PROVIDER_MODE="openai"
-        printf '%s\n' "$DEFAULT_UPSTREAM_URL" > "$BASE_URL_FILE"
+        export CODEX_PLUS_UPSTREAM_URL="$DEFAULT_UPSTREAM_URL"
     fi
     echo "$PROVIDER_MODE" > "$RUNTIME_DIR/provider.mode"
 }
 
 get_upstream_url() {
-    if [ -f "$BASE_URL_FILE" ]; then
-        local upstream
-        read -r upstream < "$BASE_URL_FILE" 2>/dev/null || upstream=""
-        if [ -n "$upstream" ]; then
-            printf '%s' "$upstream"
-            return
-        fi
+    # Read from environment variable set by setup_provider_env
+    if [ -n "$CODEX_PLUS_UPSTREAM_URL" ]; then
+        printf '%s' "$CODEX_PLUS_UPSTREAM_URL"
+    else
+        printf '%s' "$DEFAULT_UPSTREAM_URL"
     fi
-    printf '%s' "$DEFAULT_UPSTREAM_URL"
 }
 
 validate_pid() {
@@ -184,10 +182,10 @@ cleanup_stale_resources() {
         rm -f "$RUNTIME_DIR/logging.mode"
     fi
 
-    # Clean up any orphaned proxy processes
-    local orphaned_pids=$(pgrep -f "python.*$PROXY_MODULE" | grep -v "$$" || true)
+    # Clean up any orphaned proxy process on THIS port only
+    local orphaned_pids=$(lsof -ti :$PROXY_PORT 2>/dev/null || true)
     if [ -n "$orphaned_pids" ]; then
-        echo -e "${YELLOW}🧹 Found orphaned proxy processes: $orphaned_pids${NC}"
+        echo -e "${YELLOW}🧹 Found orphaned proxy process on port $PROXY_PORT: $orphaned_pids${NC}"
         echo "$orphaned_pids" | xargs -r kill -TERM 2>/dev/null || true
         sleep 2
         echo "$orphaned_pids" | xargs -r kill -KILL 2>/dev/null || true
@@ -201,8 +199,8 @@ print_status() {
         local pid=$(cat "$PID_FILE" 2>/dev/null)
         if validate_pid "$pid"; then
             echo -e "  ${GREEN}✅ Running${NC} (PID: $pid)"
-            echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
-            echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
+            echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:$PROXY_PORT"
+            echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:$PROXY_PORT/health"
             echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
             if [ -f "$RUNTIME_DIR/provider.mode" ]; then
                 local provider
@@ -280,16 +278,16 @@ start_proxy() {
     fi
 
     # Kill existing proxy processes instead of waiting for locks
-    echo -e "${YELLOW}🔄 Checking for existing proxy processes...${NC}"
+    echo -e "${YELLOW}🔄 Checking for existing proxy processes on port $PROXY_PORT...${NC}"
 
-    # Kill any existing proxy processes on port 10000 - multiple attempts
+    # Kill any existing proxy processes on THIS port only - multiple attempts
     for attempt in 1 2 3; do
-        local existing_pids=$(lsof -ti :10000 2>/dev/null)
+        local existing_pids=$(lsof -ti :$PROXY_PORT 2>/dev/null)
         if [ -z "$existing_pids" ]; then
             break
         fi
 
-        echo -e "${YELLOW}⚡ Attempt $attempt: Killing proxy processes: $existing_pids${NC}"
+        echo -e "${YELLOW}⚡ Attempt $attempt: Killing proxy processes on port $PROXY_PORT: $existing_pids${NC}"
 
         # Try TERM first, then KILL
         if [ "$attempt" -le 2 ]; then
@@ -301,24 +299,21 @@ start_proxy() {
         sleep 2
     done
 
-    # Also kill any uvicorn processes that might be related
-    pkill -f "uvicorn.*codex_plus" 2>/dev/null || true
-
-    # Final check - if still running, force kill everything
-    if lsof -i :10000 >/dev/null 2>&1; then
-        echo -e "${YELLOW}🔨 Force killing all processes on port 10000...${NC}"
-        lsof -ti :10000 2>/dev/null | xargs -r kill -9 2>/dev/null
+    # Final check - if still running, force kill
+    if lsof -i :$PROXY_PORT >/dev/null 2>&1; then
+        echo -e "${YELLOW}🔨 Force killing all processes on port $PROXY_PORT...${NC}"
+        lsof -ti :$PROXY_PORT 2>/dev/null | xargs -r kill -9 2>/dev/null
         sleep 3
 
         # If STILL running, give up
-        if lsof -i :10000 >/dev/null 2>&1; then
-            echo -e "${RED}❌ Failed to stop existing proxy on port 10000${NC}"
-            lsof -i :10000
+        if lsof -i :$PROXY_PORT >/dev/null 2>&1; then
+            echo -e "${RED}❌ Failed to stop existing proxy on port $PROXY_PORT${NC}"
+            lsof -i :$PROXY_PORT
             return 1
         fi
     fi
 
-    echo -e "${GREEN}✅ Port 10000 is now available${NC}"
+    echo -e "${GREEN}✅ Port $PROXY_PORT is now available${NC}"
 
     # Validate environment
     cd "$SCRIPT_DIR" || {
@@ -362,13 +357,18 @@ start_proxy() {
     # ⚠️ This command starts the curl_cffi proxy with Cloudflare bypass ⚠️
     # ❌ FORBIDDEN: Changing module, host, port, or import structure
     # Use nohup to detach the proxy so it survives terminal closure
+    # Export provider environment variables to proxy process
+    CODEX_PLUS_UPSTREAM_URL="$CODEX_PLUS_UPSTREAM_URL" \
+    CODEX_PLUS_PROVIDER_MODE="$CODEX_PLUS_PROVIDER_MODE" \
+    PROXY_PORT="$PROXY_PORT" \
     nohup python -c "
 import sys, os
 try:
     from codex_plus.$PROXY_MODULE import app
     import uvicorn
-    # 🔒 PROTECTED: Port 10000 required for Codex compatibility
-    uvicorn.run(app, host='127.0.0.1', port=10000, log_level='info')
+    # 🔒 PROTECTED: Port configurable via PROXY_PORT (default 10000 for Codex compatibility)
+    port = int(os.environ.get('PROXY_PORT', 10000))
+    uvicorn.run(app, host='127.0.0.1', port=port, log_level='info')
 except Exception as e:
     print(f'STARTUP_ERROR: {e}', file=sys.stderr)
     sys.exit(1)
@@ -384,7 +384,7 @@ except Exception as e:
         sleep 1
         if validate_pid "$pid"; then
             # Additional check: verify the service is actually responding
-            if curl -s -f http://localhost:10000/health >/dev/null 2>&1; then
+            if curl -s -f "http://localhost:$PROXY_PORT/health" >/dev/null 2>&1; then
                 startup_success=true
                 break
             elif [ $i -eq $((startup_timeout-1)) ]; then
@@ -403,8 +403,8 @@ except Exception as e:
         # Show status without cleanup to avoid killing the just-started process
         echo -e "${BLUE}🔍 M1 Proxy Status:${NC}"
         echo -e "  ${GREEN}✅ Running${NC} (PID: $pid)"
-        echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
-        echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
+        echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:$PROXY_PORT"
+        echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:$PROXY_PORT/health"
         echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
         # Check both environment variable and persisted file for logging mode
         if [ -f "$RUNTIME_DIR/logging.mode" ] || [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
@@ -483,18 +483,18 @@ stop_proxy() {
         echo -e "${YELLOW}⚠️  No PID file found${NC}"
     fi
 
-    # Clean up any remaining proxy processes as fallback
-    local remaining_pids=$(pgrep -f "python.*$PROXY_MODULE" | grep -v "$$" || true)
+    # Clean up any remaining proxy process on THIS port as fallback
+    local remaining_pids=$(lsof -ti :$PROXY_PORT 2>/dev/null || true)
     if [ -n "$remaining_pids" ]; then
-        echo -e "${YELLOW}🧹 Cleaning up remaining proxy processes: $remaining_pids${NC}"
+        echo -e "${YELLOW}🧹 Cleaning up remaining proxy process on port $PROXY_PORT: $remaining_pids${NC}"
         echo "$remaining_pids" | xargs -r kill -TERM 2>/dev/null || true
         sleep 2
         echo "$remaining_pids" | xargs -r kill -KILL 2>/dev/null || true
         echo -e "${GREEN}✅ Cleaned up remaining processes${NC}"
     fi
 
-    # Clean up lock files and logging mode state
-    rm -f "$RUNTIME_DIR/proxy.lock"
+    # Clean up lock files and logging mode state for THIS port
+    rm -f "$LOCK_FILE"
     rm -f "$RUNTIME_DIR/logging.mode"
 }
 
@@ -686,7 +686,7 @@ show_help() {
     echo "  $0 status                                    # Check status"
     echo "  $0 --cerebras                                # Start proxy using Cerebras environment"
     echo "  $0 --cerebras enable                          # Equivalent explicit command"
-    echo "  OPENAI_BASE_URL=http://localhost:10000 codex  # Use with codex"
+    echo "  OPENAI_BASE_URL=http://localhost:$PROXY_PORT codex  # Use with codex"
     echo "  $0 disable                                   # Stop proxy"
 }
 

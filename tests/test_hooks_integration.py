@@ -32,7 +32,6 @@ class InjectMarker(Hook):
     async def pre_input(self, request, body):
         body['hooked'] = True
         return body
-hook = InjectMarker('inject-marker', {'type':'pre-input','priority':10,'enabled':True})
 """
     hook_file = write_hook(hooks_dir, "inject_marker", hook_code)
 
@@ -61,7 +60,7 @@ hook = InjectMarker('inject-marker', {'type':'pre-input','priority':10,'enabled'
             mock_session.request.return_value = mock_response
             mock_session_cls.return_value = mock_session
 
-            payload = {"model":"gpt-5","instructions":"Test","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"/echo hi"}]}]}
+            payload = {"model":"gpt-5","instructions":"Test","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"plain text message"}]}]}
             r = client.post("/responses", json=payload)
             assert r.status_code == 200
             # Verify the body sent upstream contained our injected marker

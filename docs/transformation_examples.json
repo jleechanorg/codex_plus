@@ -1,0 +1,356 @@
+{
+  "example_1_simple_message": {
+    "description": "Simple user message transformation",
+    "codex_format": {
+      "model": "gpt-5-codex",
+      "instructions": "You are a helpful coding assistant.",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Hello, how are you?"
+            }
+          ]
+        }
+      ],
+      "stream": true
+    },
+    "cerebras_format": {
+      "model": "llama-3.3-70b",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a helpful coding assistant."
+        },
+        {
+          "role": "user",
+          "content": "Hello, how are you?"
+        }
+      ],
+      "stream": true,
+      "temperature": 0.7,
+      "max_tokens": 4096
+    }
+  },
+  "example_2_with_tools": {
+    "description": "Request with tool definitions",
+    "codex_format": {
+      "model": "gpt-5-codex",
+      "instructions": "You are a shell command assistant.",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "List files in current directory"
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "name": "shell",
+          "description": "Execute a shell command",
+          "strict": false,
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Command and arguments"
+              },
+              "workdir": {
+                "type": "string",
+                "description": "Working directory"
+              }
+            },
+            "required": ["command"]
+          }
+        }
+      ],
+      "tool_choice": "auto",
+      "parallel_tool_calls": false,
+      "stream": true
+    },
+    "cerebras_format": {
+      "model": "llama-3.3-70b",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a shell command assistant."
+        },
+        {
+          "role": "user",
+          "content": "List files in current directory"
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "shell",
+            "description": "Execute a shell command",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Command and arguments"
+                },
+                "workdir": {
+                  "type": "string",
+                  "description": "Working directory"
+                }
+              },
+              "required": ["command"]
+            }
+          }
+        }
+      ],
+      "tool_choice": "auto",
+      "stream": true,
+      "temperature": 0.7,
+      "max_tokens": 4096
+    }
+  },
+  "example_3_multi_turn": {
+    "description": "Multi-turn conversation",
+    "codex_format": {
+      "model": "gpt-5-codex",
+      "instructions": "You are a helpful assistant.",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "What is 2+2?"
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "2+2 equals 4."
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "What about 3+3?"
+            }
+          ]
+        }
+      ],
+      "stream": true
+    },
+    "cerebras_format": {
+      "model": "llama-3.3-70b",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a helpful assistant."
+        },
+        {
+          "role": "user",
+          "content": "What is 2+2?"
+        },
+        {
+          "role": "assistant",
+          "content": "2+2 equals 4."
+        },
+        {
+          "role": "user",
+          "content": "What about 3+3?"
+        }
+      ],
+      "stream": true,
+      "temperature": 0.7,
+      "max_tokens": 4096
+    }
+  },
+  "example_4_dropped_fields": {
+    "description": "Request with Codex-specific fields that get dropped",
+    "codex_format": {
+      "model": "gpt-5-codex",
+      "instructions": "You are helpful.",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Solve this complex problem"
+            }
+          ]
+        }
+      ],
+      "reasoning": {
+        "effort": "high",
+        "summary": "auto"
+      },
+      "store": false,
+      "include": ["reasoning.encrypted_content"],
+      "prompt_cache_key": "01999c01-7338-7800-9a15-c1e76bf3bdd1",
+      "stream": true
+    },
+    "cerebras_format": {
+      "model": "llama-3.3-70b",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are helpful."
+        },
+        {
+          "role": "user",
+          "content": "Solve this complex problem"
+        }
+      ],
+      "stream": true,
+      "temperature": 0.7,
+      "max_tokens": 4096
+    },
+    "dropped_fields": [
+      "reasoning",
+      "store",
+      "include",
+      "prompt_cache_key"
+    ]
+  },
+  "example_5_tool_response": {
+    "description": "Assistant message with tool call",
+    "codex_format": {
+      "model": "gpt-5-codex",
+      "instructions": "You are helpful.",
+      "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "List files"
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [],
+          "tool_calls": [
+            {
+              "id": "call_abc123",
+              "type": "function",
+              "function": {
+                "name": "shell",
+                "arguments": "{\"command\": [\"ls\", \"-la\"]}"
+              }
+            }
+          ]
+        },
+        {
+          "type": "message",
+          "role": "tool",
+          "tool_call_id": "call_abc123",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "total 64\ndrwxr-xr-x  12 user  staff   384 Jan 15 10:00 .\ndrwxr-xr-x   6 user  staff   192 Jan 14 09:00 .."
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "name": "shell",
+          "description": "Run shell command",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "array",
+                "items": {"type": "string"}
+              }
+            }
+          }
+        }
+      ],
+      "stream": true
+    },
+    "cerebras_format": {
+      "model": "llama-3.3-70b",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are helpful."
+        },
+        {
+          "role": "user",
+          "content": "List files"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_abc123",
+              "type": "function",
+              "function": {
+                "name": "shell",
+                "arguments": "{\"command\": [\"ls\", \"-la\"]}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_abc123",
+          "content": "total 64\ndrwxr-xr-x  12 user  staff   384 Jan 15 10:00 .\ndrwxr-xr-x   6 user  staff   192 Jan 14 09:00 .."
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "shell",
+            "description": "Run shell command",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "array",
+                  "items": {"type": "string"}
+                }
+              }
+            }
+          }
+        }
+      ],
+      "stream": true,
+      "temperature": 0.7,
+      "max_tokens": 4096
+    }
+  }
+}

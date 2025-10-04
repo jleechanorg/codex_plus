@@ -529,19 +529,24 @@ class HookSystem:
     async def execute_pre_input_hooks(self, request: Request, body: Dict[str, Any]) -> Dict[str, Any]:
         """Execute all pre_input hooks in priority order"""
         modified_body = body.copy()
-        
+
+        logger.debug(f"execute_pre_input_hooks: Processing {len(self.hooks)} total hooks")
         for hook in self.hooks:
+            logger.debug(f"  Hook '{hook.name}': enabled={hook.enabled}, type={hook.hook_type}")
             if not hook.enabled or hook.hook_type != 'pre-input':
+                logger.debug(f"  Skipping hook '{hook.name}'")
                 continue
-                
+
+            logger.info(f"Executing pre-input hook: {hook.name}")
             try:
                 modified_body = await hook.pre_input(request, modified_body)
+                logger.info(f"Pre-input hook '{hook.name}' completed successfully")
             except Exception as e:
                 logger.error(f"Error in pre_input hook '{hook.name}': {e}")
                 logger.debug(traceback.format_exc())
                 # Continue with the original body if hook fails
                 continue
-        
+
         return modified_body
 
     # =============== Settings-based hooks execution ===============
@@ -918,9 +923,14 @@ hook_system = HookSystem()
 # Integration points for FastAPI route handler
 async def process_pre_input_hooks(request: Request, body: Dict[str, Any]) -> Dict[str, Any]:
     """Process pre-input hooks before making API call"""
+    logger.debug(f"process_pre_input_hooks called with body keys: {list(body.keys())}")
+    original_body = body.copy()
     body = await hook_system.execute_pre_input_hooks(request, body)
+    if body != original_body:
+        logger.info(f"Body modified by execute_pre_input_hooks")
     # Run settings-based UserPromptSubmit hooks
     body = await hook_system.run_user_prompt_submit_hooks(request, body)
+    logger.debug(f"process_pre_input_hooks returning body keys: {list(body.keys())}")
     return body
 
 async def process_post_output_hooks(response: Union[Response, StreamingResponse]) -> Union[Response, StreamingResponse]:

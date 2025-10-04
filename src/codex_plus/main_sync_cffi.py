@@ -39,6 +39,7 @@ import sys
 import os
 import time
 import re
+from pathlib import Path
 from urllib.parse import urlparse
 from .status_line_middleware import HookMiddleware
 
@@ -78,8 +79,42 @@ if not logger.handlers:
 
 # 🔒 PROTECTED CONFIGURATION - DO NOT MODIFY 🔒
 # CRITICAL: This URL MUST remain exactly as specified for Codex to work
-UPSTREAM_URL = "https://chatgpt.com/backend-api/codex"  # ChatGPT backend for Codex
-# ⚠️ Changing this URL will break all Codex functionality ⚠️
+# Support dynamic upstream based on provider mode (Cerebras or ChatGPT)
+def _get_upstream_url() -> str:
+    """Resolve the upstream URL with validation and fallback logic."""
+
+    default_url = "https://chatgpt.com/backend-api/codex"
+
+    env_url = os.getenv("CODEX_PLUS_UPSTREAM_URL")
+    if env_url:
+        if _validate_upstream_url(env_url):
+            logger.debug(f"📡 Using upstream URL from environment: {env_url}")
+            return env_url
+        logger.warning("⚠️ Invalid CODEX_PLUS_UPSTREAM_URL provided; falling back to defaults")
+
+    provider_file_path = os.environ.get(
+        "CODEXPLUS_PROVIDER_BASE_URL_FILE",
+        "/tmp/codex_plus/provider.base_url",
+    )
+
+    try:
+        candidate_path = Path(provider_file_path)
+        if candidate_path.exists():
+            file_url = candidate_path.read_text(encoding="utf-8").strip()
+            if file_url and _validate_upstream_url(file_url):
+                logger.debug(f"📡 Using upstream URL from {candidate_path}: {file_url}")
+                return file_url
+            logger.warning(
+                "⚠️ Provider base URL file contained invalid URL; ignoring",
+            )
+    except Exception as exc:
+        logger.warning(f"⚠️ Failed to read provider base URL file: {exc}")
+
+    logger.debug(f"📡 Using default upstream URL: {default_url}")
+    return default_url
+
+# ⚠️ UPSTREAM_URL is now computed per-request via _get_upstream_url() ⚠️
+# ⚠️ This allows dynamic configuration via CODEX_PLUS_UPSTREAM_URL env var ⚠️
 
 # Security validation
 def _validate_proxy_request(path: str, headers: dict) -> None:
@@ -119,10 +154,19 @@ def _validate_upstream_url(url: str) -> bool:
     """Validate that upstream URL is allowed"""
     try:
         parsed = urlparse(url)
-        # Only allow HTTPS to ChatGPT backend
-        return (parsed.scheme == 'https' and
-                parsed.hostname == 'chatgpt.com' and
-                parsed.path.startswith('/backend-api/'))
+        # Allow HTTPS to ChatGPT backend or Cerebras API
+        if parsed.scheme != 'https':
+            return False
+
+        # ChatGPT backend
+        if parsed.hostname == 'chatgpt.com' and parsed.path.startswith('/backend-api/'):
+            return True
+
+        # Cerebras API
+        if parsed.hostname == 'api.cerebras.ai' and parsed.path.startswith('/v1'):
+            return True
+
+        return False
     except Exception:
         return False
 
@@ -134,7 +178,8 @@ def _validate_upstream_url(url: str) -> bool:
 logger.info("Initializing LLM execution middleware (instruction mode)")
 from .llm_execution_middleware import create_llm_execution_middleware
 # ⚠️ DO NOT MODIFY: This creates the core proxy forwarding with curl_cffi
-slash_middleware = create_llm_execution_middleware(upstream_url=UPSTREAM_URL)
+# Note: upstream_url is computed per-request to allow dynamic configuration
+slash_middleware = create_llm_execution_middleware(upstream_url=None, url_getter=_get_upstream_url)
 
 # ✅ SAFE TO MODIFY: Hook system imports and processing
 from .hooks import (
