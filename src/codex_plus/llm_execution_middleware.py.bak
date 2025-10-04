@@ -654,7 +654,9 @@ BEGIN EXECUTION NOW:
                                                 "status": "in_progress",
                                             },
                                         }
-                                        yield f"data: {json.dumps(created)}\n\n".encode("utf-8")
+                                        yield f"data: {json.dumps(created)}
+
+".encode("utf-8")
                                         sequence_number += 1
                                         sent_initial_events = True
 
@@ -676,7 +678,9 @@ BEGIN EXECUTION NOW:
                                                     "summary": [],
                                                 },
                                             }
-                                            yield f"data: {json.dumps(reasoning_added)}\n\n".encode("utf-8")
+                                            yield f"data: {json.dumps(reasoning_added)}
+
+".encode("utf-8")
                                             sequence_number += 1
                                             reasoning_item_sent = True
                                             logger.info(f"📤 Sent reasoning output_item.added (index 0)")
@@ -696,7 +700,9 @@ BEGIN EXECUTION NOW:
                                                     "summary": [],
                                                 },
                                             }
-                                            yield f"data: {json.dumps(reasoning_done)}\n\n".encode("utf-8")
+                                            yield f"data: {json.dumps(reasoning_done)}
+
+".encode("utf-8")
                                             sequence_number += 1
                                             reasoning_item_done = True
                                             current_output_index = 1
@@ -720,7 +726,9 @@ BEGIN EXECUTION NOW:
                                                     "arguments": "",
                                                 },
                                             }
-                                            yield f"data: {json.dumps(function_call_added)}\n\n".encode("utf-8")
+                                            yield f"data: {json.dumps(function_call_added)}
+
+".encode("utf-8")
                                             sequence_number += 1
                                             function_call_item_sent = True
                                             logger.info(f"📤 Sent function_call output_item.added (index {current_output_index})")
@@ -739,7 +747,9 @@ BEGIN EXECUTION NOW:
                                                 "content": [],
                                             },
                                         }
-                                        yield f"data: {json.dumps(message_added)}\n\n".encode("utf-8")
+                                        yield f"data: {json.dumps(message_added)}
+
+".encode("utf-8")
                                         sequence_number += 1
                                         function_call_item_sent = True  # Reuse flag to prevent re-sending
                                         logger.info(f"📤 Sent message output_item.added (index {current_output_index})")
@@ -751,7 +761,9 @@ BEGIN EXECUTION NOW:
                                             "item_id": f"msg_{response_id}" if response_id else "msg_0",
                                             "delta": delta["content"],
                                         }
-                                        yield f"data: {json.dumps(transformed)}\n\n".encode("utf-8")
+                                        yield f"data: {json.dumps(transformed)}
+
+".encode("utf-8")
                                         sequence_number += 1
                                     elif delta.get("tool_calls"):
                                         for tool_call in delta["tool_calls"]:
@@ -764,7 +776,9 @@ BEGIN EXECUTION NOW:
                                                     "item_id": function_call_item_id or "call_0",
                                                     "delta": arguments,
                                                 }
-                                                yield f"data: {json.dumps(tool_delta)}\n\n".encode("utf-8")
+                                                yield f"data: {json.dumps(tool_delta)}
+
+".encode("utf-8")
                                                 sequence_number += 1
                                     elif choices[0].get("finish_reason"):
                                         # Send output_item.done for function_call if it was sent
@@ -779,7 +793,9 @@ BEGIN EXECUTION NOW:
                                                     "status": "completed",
                                                 },
                                             }
-                                            yield f"data: {json.dumps(function_call_done)}\n\n".encode("utf-8")
+                                            yield f"data: {json.dumps(function_call_done)}
+
+".encode("utf-8")
                                             sequence_number += 1
                                             logger.info(f"📤 Sent function_call output_item.done (index {current_output_index})")
 
@@ -791,9 +807,12 @@ BEGIN EXECUTION NOW:
                                                 "status": "completed",
                                             },
                                         }
-                                        yield f"data: {json.dumps(completion)}\n\n".encode("utf-8")
+                                        yield f"data: {json.dumps(completion)}
+
+".encode("utf-8")
                                         sequence_number += 1
-                                        yield b"\n"
+                                        yield b"
+"
                     finally:
                         if cleanup_stack is not None:
                             await cleanup_stack.aclose()
