@@ -134,3 +134,21 @@ yield output_item.done(type="function_call", output_index=0)
 - Cerebras response: `/tmp/codex_plus/cerebras_responses/latest_response.txt`
 - Proxy logs (10000): `/tmp/codex_plus/proxy.log`
 - Proxy logs (10001): `/tmp/codex_plus/proxy_10001.log`
+
+## CRITICAL FINDING (2025-10-04 22:53)
+
+**ChatGPT DOES NOT send function_call events!**
+
+Examination of `/tmp/codex_plus/chatgpt_responses/latest_response.txt` shows:
+- Output item 0: `type: "reasoning"` (encrypted)
+- Output item 1: `type: "message"` (NOT function_call!)
+- Tool execution happens INTERNALLY in Codex CLI
+- The message item contains the RESULT of tool execution
+
+This means:
+1. ❌ We should NOT be transforming Cerebras to ChatGPT `/responses` format
+2. ✅ We should keep Cerebras in OpenAI SSE format and let Codex handle it
+3. ✅ Tool calls are executed by parsing OpenAI `tool_calls` deltas
+4. ❌ ChatGPT format is for DISPLAYING results, not for tool execution
+
+**Correct approach**: Let Cerebras responses stay in OpenAI format (with reasoning tokens), don't transform to ChatGPT events at all.
