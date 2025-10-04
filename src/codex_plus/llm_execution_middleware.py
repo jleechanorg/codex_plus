@@ -556,6 +556,9 @@ BEGIN EXECUTION NOW:
                 async def stream_response_async():
                     chunk_buffer = b""
                     sent_initial_events = False
+                    sent_output_item = False  # Track if output_item.added was sent
+                    accumulated_reasoning = []  # Buffer reasoning until response type known
+                    is_function_call_response = False  # Track if this is a function call
                     response_id = None
                     logger.info(
                         "🔄 Async stream response generator started",
@@ -633,8 +636,9 @@ BEGIN EXECUTION NOW:
 
                                     delta = choices[0].get("delta", {})
 
+                                    # Send response.created on first delta (role, reasoning, content, or tool_calls)
                                     if not sent_initial_events and (
-                                        delta.get("content") or delta.get("tool_calls")
+                                        delta.get("role") or delta.get("reasoning") or delta.get("content") or delta.get("tool_calls")
                                     ):
                                         response_id = chunk_data.get("id", "")
                                         created = {
@@ -645,8 +649,12 @@ BEGIN EXECUTION NOW:
                                             },
                                         }
                                         yield f"data: {json.dumps(created)}\n\n".encode("utf-8")
+                                        sent_initial_events = True
 
-                                        if delta.get("tool_calls"):
+                                    # Determine response type and send output_item.added
+                                    if delta.get("tool_calls"):
+                                        is_function_call_response = True
+                                        if not sent_output_item:
                                             tool_call = delta["tool_calls"][0]
                                             function_name = (
                                                 tool_call.get("function", {}).get("name", "unknown")
@@ -662,19 +670,22 @@ BEGIN EXECUTION NOW:
                                                     "arguments": "",
                                                 },
                                             }
-                                        else:
-                                            added = {
-                                                "type": "response.output_item.added",
-                                                "item": {
-                                                    "id": "item_0",
-                                                    "type": "message",
-                                                    "role": "assistant",
-                                                    "content": [],
-                                                },
-                                            }
-
+                                            yield f"data: {json.dumps(added)}\n\n".encode("utf-8")
+                                            sent_output_item = True
+                                    elif delta.get("content") and not sent_output_item:
+                                        # Regular message response
+                                        added = {
+                                            "type": "response.output_item.added",
+                                            "item": {
+                                                "id": "item_0",
+                                                "type": "message",
+                                                "role": "assistant",
+                                                "content": [],
+                                            },
+                                        }
                                         yield f"data: {json.dumps(added)}\n\n".encode("utf-8")
-                                        sent_initial_events = True
+                                        sent_output_item = True
+                                    # Reasoning tokens are buffered but not sent (Codex CLI doesn't support them)
 
                                     if delta.get("content"):
                                         transformed = {
