@@ -8,7 +8,7 @@ argument-hint: "[scope]"
 
 # /consensus Command - Multi-Agent Consensus Review
 
-High-speed consensus command tailored for the Codex Plus proxy. Run it when you need a decisive multi-agent style review of code, documentation, or launch decisions. The workflow is optimized for solo MVP projects with GitHub rollback safety.
+High-speed consensus command tailored for the Codex Plus proxy. Run it when you need a decisive multi-agent-style review of code, documentation, or launch decisions. The workflow is optimized for solo MVP projects with GitHub rollback safety.
 
 > ⚠️ **Codex Plus compatibility:**
 > - Execute every step directly in this CLI environment; do not rely on unavailable tools.
@@ -44,7 +44,8 @@ Pick the 5-agent set that matches the mode:
 - **Documentation & Spec Mode**: `accuracy-reviewer`, `evidence-verifier`, `product-strategist`, `delivery-ops`, `clarity-editor`
 - **Operational Decision Mode**: `risk-analyst`, `product-strategist`, `delivery-ops`, `customer-advocate`, `exec-synthesizer`
 
-Launch all five agents in parallel using the Task tool when available. If parallel execution is unsupported, run them sequentially but keep the prompts and structure identical.
+Launch all five agents in parallel using the Task tool when available.
+> **Fallback for unsupported parallel execution:** If the Task tool cannot run agents concurrently, execute the same five prompts sequentially. Expect each agent run to take several minutes, so a full three-round consensus may require noticeable extra time. Watch for CLI timeouts or stalled executions; if delays occur, narrow the scope, trim optional prompts, or pause after each agent to confirm progress.
 
 ### Prompt Template
 For each agent, provide:
@@ -60,7 +61,7 @@ Stop the round immediately if any agent uncovers a severity 9-10 blocker.
 1. Collect PASS/REWORK verdicts and confidence scores.
 2. Compute:
    - **CONSENSUS_PASS** when ≥3 agents PASS *and* average confidence ≥6.
-   - **CONSENSUS_REWORK** when ≥3 agents request REWORK *or* average confidence <5.
+   - **CONSENSUS_REWORK** when ≥3 agents request REWORK *or* average confidence ≤5.
    - Otherwise note **MIXED_SIGNALS**, document disagreements, and continue with majority direction.
 3. Apply quick fixes for REWORK items before starting another round (up to three total).
 4. Perform validation appropriate to the mode:
@@ -81,8 +82,8 @@ Summarize using the following structure:
 - Key validated areas
 
 ## Major Findings
-| Round | Agent | Reference (file/section) | Severity | Resolution |
-|-------|-------|---------------------------|----------|------------|
+| Round | Source Agent | Reference (file/section) | Severity | Resolution |
+| ----- | ------------- | ------------------------ | -------- | ---------- |
 
 ## Implemented Fixes / Actions
 - <list of updates or decisions>
