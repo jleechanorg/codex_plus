@@ -80,7 +80,7 @@ This command is designed to be resilient to permission issues by automatically f
 
 # Fuzzy search for typos
 
-/history "databse migratoin" --fuzzy
+/history "database migration" --fuzzy
 
 # Recent conversations only
 
@@ -213,11 +213,36 @@ python3 -c "import glob, os; print('\n'.join(glob.glob(os.path.expanduser('~/.co
 
 # File content reading (single line executable)
 
-python3 -c "import json,sys; [print(json.dumps(json.loads(l)) if l.strip() else '') for l in open(sys.argv[1]) if l.strip()]" ~/.codex/sessions/rollout-20241005-123456-uuid.jsonl
+python3 - "$HOME/.codex/sessions/rollout-20241005-123456-uuid.jsonl" <<'PY'
+import json
+import sys
 
-# File content reading (with error handling)  
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    for line in fh:
+        data = line.strip()
+        if not data:
+            continue
+        print(json.dumps(json.loads(data)))
+PY
 
-python3 -c "import json,sys; exec('for l in open(sys.argv[1]):\n  if not l.strip():\n    continue\n  try:\n    print(json.dumps(json.loads(l)))\n  except Exception as exc:\n    print(f\"Parse error: {exc} | {l.strip()}\", file=sys.stderr)')" ~/.codex/sessions/rollout-20241005-123456-uuid.jsonl
+# File content reading (with error handling)
+
+python3 - "$HOME/.codex/sessions/rollout-20241005-123456-uuid.jsonl" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    for line in fh:
+        data = line.strip()
+        if not data:
+            continue
+        try:
+            print(json.dumps(json.loads(data)))
+        except json.JSONDecodeError as exc:
+            print(f"Parse error: {exc.msg} | line={data}", file=sys.stderr)
+PY
 ```
 
 This allows `/execute` to:
@@ -340,7 +365,7 @@ Can be combined with other commands:
 
 # Fuzzy search with context
 
-/history "databse migratoin problm" --fuzzy --context 5
+/history "database migration problem" --fuzzy --context 5
 
 # Find conversations about specific files or commands
 
