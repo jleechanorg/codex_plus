@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, MutableMapping, Optional
@@ -117,13 +118,14 @@ async def record_tool_outputs(
 
     await ensure_log_dir()
 
-    log_file = LOG_DIR / f"tool_outputs_{os.getpid()}_{asyncio.get_running_loop().time():.0f}.json"
+    timestamp_ns = time.time_ns()
+    log_file = LOG_DIR / f"tool_outputs_{os.getpid()}_{timestamp_ns}.json"
     await _write_json(log_file, {
         "path": record.path,
         "body": record.body,
         "headers": record.headers,
     })
 
-    logger.info("🪵 Recorded Cerebras tool output follow-up to %s", log_file)
+    logger.info("[TOOL_OUTPUT] Recorded Cerebras tool output follow-up to %s", log_file)
     return log_file
 
