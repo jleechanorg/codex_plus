@@ -37,6 +37,14 @@ PID_FILE="$RUNTIME_DIR/proxy.pid"
 LOG_FILE="$RUNTIME_DIR/proxy.log"
 LOCK_FILE="$RUNTIME_DIR/proxy.lock"
 BASE_URL_FILE="$RUNTIME_DIR/provider.base_url"
+
+if [ -n "${CODEX_PROXY_RUNTIME_DIR:-}" ]; then
+    RUNTIME_DIR="$CODEX_PROXY_RUNTIME_DIR"
+    PID_FILE="$RUNTIME_DIR/proxy.pid"
+    LOG_FILE="$RUNTIME_DIR/proxy.log"
+    LOCK_FILE="$RUNTIME_DIR/proxy.lock"
+    BASE_URL_FILE="$RUNTIME_DIR/provider.base_url"
+fi
 # Autostart configuration
 AUTOSTART_LABEL="com.codex.plus.proxy"
 LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
@@ -184,14 +192,52 @@ cleanup_stale_resources() {
         rm -f "$RUNTIME_DIR/logging.mode"
     fi
 
-    # Clean up any orphaned proxy processes
-    local orphaned_pids=$(pgrep -f "python.*$PROXY_MODULE" | grep -v "$$" || true)
-    if [ -n "$orphaned_pids" ]; then
-        echo -e "${YELLOW}🧹 Found orphaned proxy processes: $orphaned_pids${NC}"
-        echo "$orphaned_pids" | xargs -r kill -TERM 2>/dev/null || true
-        sleep 2
-        echo "$orphaned_pids" | xargs -r kill -KILL 2>/dev/null || true
+}
+
+PORT_GUARD_EXIT_CODE=""
+PORT_GUARD_OUTPUT=""
+
+run_port_guard() {
+    if [ -n "${CODEX_PROXY_GUARD_STATE:-}" ]; then
+        case "$CODEX_PROXY_GUARD_STATE" in
+            owned_by_proxy) PORT_GUARD_EXIT_CODE=0 ;;
+            free) PORT_GUARD_EXIT_CODE=10 ;;
+            occupied_other) PORT_GUARD_EXIT_CODE=20 ;;
+            unknown) PORT_GUARD_EXIT_CODE=30 ;;
+            *) PORT_GUARD_EXIT_CODE=30 ;;
+        esac
+        PORT_GUARD_OUTPUT="{\"state\": \"${CODEX_PROXY_GUARD_STATE}\"}"
+        return 0
     fi
+
+    local python_cmd=("python3")
+    if [ -n "${PYTHON:-}" ]; then
+        python_cmd=("${PYTHON}")
+    elif ! command -v python3 >/dev/null 2>&1; then
+        python_cmd=("python")
+    fi
+
+    local env_pythonpath="$SCRIPT_DIR/src"
+    if [ -n "${PYTHONPATH:-}" ]; then
+        env_pythonpath="$env_pythonpath:$PYTHONPATH"
+    fi
+
+    PORT_GUARD_OUTPUT=$(PYTHONPATH="$env_pythonpath" "${python_cmd[@]}" -m codex_plus.port_guard \
+        --port 10000 \
+        --health-url "http://127.0.0.1:10000/health" \
+        --health-timeout 1.0 \
+        --expect codex_plus \
+        --expect main_sync_cffi \
+        --expect uvicorn \
+        --json 2>/dev/null)
+    PORT_GUARD_EXIT_CODE=$?
+    if [ -z "$PORT_GUARD_OUTPUT" ]; then
+        PORT_GUARD_OUTPUT="{\"state\": \"unknown\"}"
+    fi
+    case "$PORT_GUARD_EXIT_CODE" in
+        0|10|20|30) :;;
+        *) PORT_GUARD_EXIT_CODE=30 ;;
+    esac
 }
 
 print_status() {
@@ -271,12 +317,32 @@ start_proxy() {
     startup_success=false
     trap 'if [ "${startup_success:-false}" != true ]; then rm -f "$LOCK_FILE"; fi' EXIT
 
-    # Check if already running (after acquiring lock)
     if [ "${FORCE_RESTART}" = "true" ]; then
         echo -e "${YELLOW}♻️  Force restart requested (${PROVIDER_MODE} mode) - continuing${NC}"
-    elif print_status >/dev/null 2>&1; then
-        echo -e "${YELLOW}⚠️  Proxy is already running${NC}"
-        return 0
+    else
+        run_port_guard
+        case "${PORT_GUARD_EXIT_CODE:-}" in
+            0)
+                echo -e "${YELLOW}⚠️  Proxy already running on port 10000; skipping start${NC}"
+                startup_success=true
+                rm -f "$LOCK_FILE"
+                trap - EXIT
+                return 0
+                ;;
+            20)
+                echo -e "${RED}❌ Port 10000 is in use by another process; refusing to start${NC}"
+                echo -e "${YELLOW}ℹ️  Port guard details:${NC} ${PORT_GUARD_OUTPUT}"
+                rm -f "$LOCK_FILE"
+                trap - EXIT
+                return 1
+                ;;
+            30)
+                echo -e "${YELLOW}⚠️  Unable to determine port ownership; continuing with startup${NC}"
+                ;;
+            *)
+                :
+                ;;
+        esac
     fi
 
     # Kill existing proxy processes instead of waiting for locks
