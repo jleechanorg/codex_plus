@@ -39,6 +39,8 @@ from typing import Dict, List, Optional, Tuple
 import re
 from fastapi.responses import JSONResponse
 
+from .cerebras_tool_output_logger import record_tool_outputs
+
 logger = logging.getLogger(__name__)
 
 class LLMExecutionMiddleware:
@@ -315,6 +317,17 @@ BEGIN EXECUTION NOW:
         else:
             body = await request.body()
         headers = dict(request.headers)
+
+        # Record Cerebras tool output follow-up payloads for debugging
+        if (
+            os.getenv("CODEX_PLUS_PROVIDER_MODE") == "cerebras"
+            and path.startswith("responses/")
+            and path.endswith("tool_outputs")
+        ):
+            try:
+                await record_tool_outputs(path=path, body_bytes=body, headers=headers)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning("Failed to record Cerebras tool output payload: %s", exc)
 
         # Only process if we have a JSON body and logging mode is NOT enabled
         if body and not logging_mode:
