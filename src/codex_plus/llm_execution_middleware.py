@@ -31,13 +31,16 @@ enables Codex to bypass Cloudflare and communicate with ChatGPT backend.
 
 Breaking these rules WILL break all Codex functionality.
 """
+import asyncio
 import json
 import logging
 import os
 import re
+import time
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 from urllib.parse import urlparse
 
 import httpx
@@ -374,6 +377,7 @@ BEGIN EXECUTION NOW:
         headers = raw_headers
 
         cached_upstream_url: Optional[str] = None
+        request_metadata: Dict[str, Any] = {}
 
         # Only process if we have a JSON body and logging mode is NOT enabled
         if body and not logging_mode:
@@ -381,6 +385,11 @@ BEGIN EXECUTION NOW:
                 # Parse and potentially modify the request
                 data = json.loads(body)
                 modified_data = self.inject_execution_behavior(data)
+                request_metadata = {
+                    "instructions": modified_data.get("instructions"),
+                    "parallel_tool_calls": modified_data.get("parallel_tool_calls"),
+                    "metadata": modified_data.get("metadata"),
+                }
 
                 # Get upstream URL dynamically
                 upstream_url = self.url_getter()
@@ -554,19 +563,8 @@ BEGIN EXECUTION NOW:
             # Enhanced with proper resource cleanup and Cerebras SSE transformation
             if is_cerebras:
                 async def stream_response_async():
-                    chunk_buffer = b""
-                    sent_initial_events = False
-                    current_output_index = 0  # Track output_index for multiple items
-                    reasoning_item_sent = False  # Track if reasoning output_item was sent
-                    reasoning_item_done = False  # Track if reasoning was closed
-                    function_call_item_sent = False  # Track if function_call output_item was sent
-                    accumulated_reasoning = []  # Buffer reasoning content
-                    response_id = None
-                    reasoning_item_id = None
-                    function_call_item_id = None  # Track function_call item ID
-                    sequence_number = 0  # Track sequence number for all events
                     logger.info(
-                        "🔄 Async stream response generator started",
+                        "🔄 Cerebras transformer stream started",
                         extra={"upstream": upstream_url},
                     )
                     logger.info(
@@ -574,119 +572,204 @@ BEGIN EXECUTION NOW:
                         extra={"status": response.status_code, "headers": dict(response.headers)},
                     )
 
-                    # Initialize Cerebras response log file
                     try:
                         log_dir = Path("/tmp/codex_plus/cerebras_responses")
                         log_dir.mkdir(parents=True, exist_ok=True)
-                        # Clear previous response
                         (log_dir / "latest_response.txt").write_bytes(b"")
                         logger.info("📝 Initialized Cerebras response log at /tmp/codex_plus/cerebras_responses/latest_response.txt")
+                        transformed_dir = Path("/tmp/codex_plus/cerebras_transformed")
+                        transformed_dir.mkdir(parents=True, exist_ok=True)
+                        (transformed_dir / "latest_response.txt").write_bytes(b"")
                     except Exception as e:
                         logger.warning(f"Failed to initialize Cerebras response log: {e}")
 
-                    chunk_count = 0
+                    chunk_buffer = b""
+                    sequence_number = 0
+                    sent_created = False
+                    sent_in_progress = False
+                    reasoning_item_sent = False
+                    reasoning_item_done = False
+                    completion_sent = False
+                    current_output_index = 0
+                    response_id: Optional[str] = None
+                    reasoning_item_id: Optional[str] = None
+                    function_call_item_id: Optional[str] = None
+                    function_call_name: Optional[str] = None
+                    message_item_id: Optional[str] = None
+                    active_item_type: Optional[str] = None
+                    instructions_text = (
+                        request_metadata.get("instructions")
+                        if isinstance(request_metadata.get("instructions"), str)
+                        else None
+                    )
+                    response_metadata_cache: Dict[str, Any] = {}
+                    function_arguments_chunks: List[str] = []
+
+                    def sse_event(event_type: str, payload: Dict[str, Any]) -> bytes:
+                        payload = dict(payload)
+                        payload.setdefault("type", event_type)
+                        json_payload = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+                        logger.debug(
+                            "📤 Emitting transformed event",
+                            extra={
+                                "event_type": event_type,
+                                "sequence_number": payload.get("sequence_number"),
+                            },
+                        )
+                        try:
+                            transformed_dir = Path("/tmp/codex_plus/cerebras_transformed")
+                            transformed_dir.mkdir(parents=True, exist_ok=True)
+                            with open(transformed_dir / "latest_response.txt", "ab") as handle:
+                                handle.write(f"event: {event_type}\n".encode("utf-8"))
+                                handle.write(f"data: {json_payload}\n\n".encode("utf-8"))
+                        except Exception as exc:
+                            logger.debug(f"Failed to log transformed event: {exc}")
+                        return (
+                            f"event: {event_type}\n".encode("utf-8")
+                            + f"data: {json_payload}\n\n".encode("utf-8")
+                        )
+
+                    def log_chunk(chunk_bytes: bytes) -> None:
+                        try:
+                            log_dir = Path("/tmp/codex_plus/cerebras_responses")
+                            with open(log_dir / "latest_response.txt", "ab") as handle:
+                                handle.write(chunk_bytes)
+                        except Exception as exc:
+                            logger.warning(f"Failed to log Cerebras response chunk: {exc}")
+
                     try:
                         async for chunk in response.aiter_bytes():
-                            chunk_count += 1
-                            logger.info(
-                                "📦 Received Cerebras chunk",
-                                extra={"chunk_index": chunk_count, "size": len(chunk) if chunk else 0},
-                            )
                             if not chunk:
                                 continue
 
-                            # Log raw Cerebras SSE chunk
-                            try:
-                                log_dir = Path("/tmp/codex_plus/cerebras_responses")
-                                with open(log_dir / "latest_response.txt", "ab") as f:
-                                    f.write(chunk)
-                                logger.info("📝 Logged Cerebras chunk", extra={"bytes": len(chunk)})
-                            except Exception as e:
-                                logger.warning(f"Failed to log Cerebras response chunk: {e}")
-
+                            log_chunk(chunk)
                             chunk_buffer += chunk
-                            events = chunk_buffer.split(b"\n\n")
-                            chunk_buffer = events[-1]
 
-                            for event in events[:-1]:
-                                if not event.strip():
+                            while b"\n\n" in chunk_buffer:
+                                raw_event, chunk_buffer = chunk_buffer.split(b"\n\n", 1)
+                                if not raw_event.strip():
                                     continue
 
-                                logger.info("🔍 Raw Cerebras event", extra={"preview": event[:300]})
-                                lines = event.decode("utf-8", errors="ignore").strip().split("\n")
-                                for line in lines:
-                                    if not line.startswith("data: "):
-                                        continue
+                                data_lines: List[bytes] = []
+                                for line in raw_event.splitlines():
+                                    if line.startswith(b"data: "):
+                                        data_lines.append(line[6:])
 
-                                    data_str = line[6:]
-                                    if data_str == "[DONE]":
-                                        completion = {
-                                            "type": "response.completed",
-                                            "response": {"status": "completed"},
-                                        }
-                                        yield f"data: {json.dumps(completion)}\n\n".encode("utf-8")
-                                        continue
+                                if not data_lines:
+                                    continue
 
-                                    try:
-                                        chunk_data = json.loads(data_str)
-                                    except json.JSONDecodeError:
-                                        logger.warning(
-                                            "Failed to parse SSE chunk", extra={"preview": data_str[:100]}
-                                        )
-                                        continue
+                                data_str = b"\n".join(data_lines).decode("utf-8", errors="ignore").strip()
+                                if not data_str:
+                                    continue
 
-                                    choices = chunk_data.get("choices", [])
-                                    if not choices:
-                                        continue
-
-                                    delta = choices[0].get("delta", {})
-
-                                    # Send response.created on first delta
-                                    if not sent_initial_events and (
-                                        delta.get("role") or delta.get("reasoning") or delta.get("content") or delta.get("tool_calls")
-                                    ):
-                                        response_id = chunk_data.get("id", "")
-                                        created = {
-                                            "type": "response.created",
-                                            "sequence_number": sequence_number,
-                                            "response": {
+                                if data_str == "[DONE]":
+                                    if not completion_sent and response_id:
+                                        completed_meta = dict(response_metadata_cache)
+                                        if completed_meta:
+                                            completed_meta["status"] = "completed"
+                                        else:
+                                            completed_meta = {
                                                 "id": response_id,
-                                                "status": "in_progress",
-                                            },
-                                        }
-                                        yield f"data: {json.dumps(created)}\n\n".encode("utf-8")
-                                        sequence_number += 1
-                                        sent_initial_events = True
-
-                                    # Handle reasoning tokens - send as first output_item (index 0)
-                                    if delta.get("reasoning"):
-                                        accumulated_reasoning.append(delta["reasoning"])
-                                        if not reasoning_item_sent:
-                                            # Generate reasoning item ID
-                                            reasoning_item_id = f"rs_{response_id}" if response_id else "rs_0"
-                                            # Send reasoning output_item.added (output_index 0)
-                                            reasoning_added = {
-                                                "type": "response.output_item.added",
-                                                "sequence_number": sequence_number,
-                                                "output_index": 0,
-                                                "item": {
-                                                    "id": reasoning_item_id,
-                                                    "type": "reasoning",
-                                                    "encrypted_content": "",  # Cerebras doesn't encrypt
-                                                    "summary": [],
-                                                },
+                                                "object": "response",
+                                                "created_at": int(time.time()),
+                                                "status": "completed",
+                                                "background": False,
+                                                "error": None,
+                                                "incomplete_details": None,
                                             }
-                                            yield f"data: {json.dumps(reasoning_added)}\n\n".encode("utf-8")
-                                            sequence_number += 1
-                                            reasoning_item_sent = True
-                                            logger.info(f"📤 Sent reasoning output_item.added (index 0)")
+                                            if instructions_text is not None:
+                                                completed_meta["instructions"] = instructions_text
+                                        completion_event = sse_event(
+                                            "response.completed",
+                                            {
+                                                "sequence_number": sequence_number,
+                                                "response": completed_meta,
+                                            },
+                                        )
+                                        yield completion_event
+                                        sequence_number += 1
+                                        completion_sent = True
+                                    try:
+                                        transformed_dir = Path("/tmp/codex_plus/cerebras_transformed")
+                                        transformed_dir.mkdir(parents=True, exist_ok=True)
+                                        with open(transformed_dir / "latest_response.txt", "ab") as handle:
+                                            handle.write(b"data: [DONE]\n\n")
+                                    except Exception:
+                                        logger.debug("Failed to log [DONE] sentinel")
+                                    yield b"data: [DONE]\n\n"
+                                    continue
 
-                                    # When tool_calls appear, close reasoning and send function_call item
-                                    if delta.get("tool_calls"):
-                                        # Close reasoning output_item if it was sent
-                                        if reasoning_item_sent and not reasoning_item_done:
-                                            reasoning_done = {
-                                                "type": "response.output_item.done",
+                                try:
+                                    chunk_data = json.loads(data_str)
+                                except json.JSONDecodeError:
+                                    logger.debug("Failed to parse Cerebras SSE chunk", extra={"preview": data_str[:100]})
+                                    continue
+
+                                choices = chunk_data.get("choices", [])
+                                if not choices:
+                                    continue
+
+                                delta = choices[0].get("delta", {})
+                                finish_reason = choices[0].get("finish_reason")
+
+                                if not sent_created and (
+                                    delta.get("role")
+                                    or delta.get("reasoning")
+                                    or delta.get("content")
+                                    or delta.get("tool_calls")
+                                ):
+                                    raw_response_id = chunk_data.get("id", "")
+                                    if raw_response_id:
+                                        response_id = (
+                                            raw_response_id
+                                            if raw_response_id.startswith("resp_")
+                                            else f"resp_{raw_response_id}"
+                                        )
+                                    else:
+                                        response_id = f"resp_{uuid4().hex}"
+                                    created_at = chunk_data.get("created") or int(time.time())
+                                    base_response_info = {
+                                        "id": response_id,
+                                        "object": "response",
+                                        "created_at": created_at,
+                                        "status": "in_progress",
+                                        "background": False,
+                                        "error": None,
+                                        "incomplete_details": None,
+                                    }
+                                    if instructions_text is not None:
+                                        base_response_info["instructions"] = instructions_text
+                                    created_event = sse_event(
+                                        "response.created",
+                                        {
+                                            "sequence_number": sequence_number,
+                                            "response": base_response_info,
+                                        },
+                                    )
+                                    yield created_event
+                                    sequence_number += 1
+                                    sent_created = True
+                                    response_metadata_cache = base_response_info
+
+                                if sent_created and not sent_in_progress:
+                                    response_meta = dict(response_metadata_cache)
+                                    in_progress_event = sse_event(
+                                        "response.in_progress",
+                                        {
+                                            "sequence_number": sequence_number,
+                                            "response": response_meta,
+                                        },
+                                    )
+                                    yield in_progress_event
+                                    sequence_number += 1
+                                    sent_in_progress = True
+
+                                if delta.get("reasoning"):
+                                    if not reasoning_item_sent:
+                                        reasoning_item_id = f"rs_{response_id}" if response_id else "rs_0"
+                                        reasoning_event = sse_event(
+                                            "response.output_item.added",
+                                            {
                                                 "sequence_number": sequence_number,
                                                 "output_index": 0,
                                                 "item": {
@@ -695,105 +778,271 @@ BEGIN EXECUTION NOW:
                                                     "encrypted_content": "",
                                                     "summary": [],
                                                 },
-                                            }
-                                            yield f"data: {json.dumps(reasoning_done)}\n\n".encode("utf-8")
-                                            sequence_number += 1
-                                            reasoning_item_done = True
-                                            current_output_index = 1
-                                            logger.info(f"📤 Sent reasoning output_item.done (index 0)")
+                                            },
+                                        )
+                                        yield reasoning_event
+                                        sequence_number += 1
+                                        reasoning_item_sent = True
+                                        current_output_index = 0
 
-                                        # Send function_call output_item.added (output_index 1 or 0 if no reasoning)
-                                        if not function_call_item_sent:
-                                            tool_call = delta["tool_calls"][0]
-                                            function_name = tool_call.get("function", {}).get("name", "unknown")
-                                            call_id = tool_call.get("id", "call_0")
-                                            function_call_item_id = call_id  # Store for later use
-                                            function_call_added = {
-                                                "type": "response.output_item.added",
+                                if delta.get("tool_calls"):
+                                    if reasoning_item_sent and not reasoning_item_done and reasoning_item_id:
+                                        reasoning_done_event = sse_event(
+                                            "response.output_item.done",
+                                            {
+                                                "sequence_number": sequence_number,
+                                                "output_index": 0,
+                                                "item": {
+                                                    "id": reasoning_item_id,
+                                                    "type": "reasoning",
+                                                    "encrypted_content": "",
+                                                    "summary": [],
+                                                },
+                                            },
+                                        )
+                                        yield reasoning_done_event
+                                        sequence_number += 1
+                                        reasoning_item_done = True
+                                        current_output_index = 1
+
+                                    if active_item_type != "function_call":
+                                        tool_call = delta["tool_calls"][0]
+                                        call_id_raw = tool_call.get("id") or "0"
+                                        function_call_item_id = call_id_raw if call_id_raw.startswith("call_") else f"call_{call_id_raw}"
+                                        function_call_name = tool_call.get("function", {}).get("name", "unknown")
+                                        function_event = sse_event(
+                                            "response.output_item.added",
+                                            {
                                                 "sequence_number": sequence_number,
                                                 "output_index": current_output_index,
                                                 "item": {
-                                                    "id": call_id,
+                                                    "id": function_call_item_id,
                                                     "type": "function_call",
-                                                    "name": function_name,
-                                                    "call_id": call_id,
+                                                    "name": function_call_name,
+                                                    "call_id": function_call_item_id,
                                                     "arguments": "",
+                                                    "status": "in_progress",
                                                 },
-                                            }
-                                            yield f"data: {json.dumps(function_call_added)}\n\n".encode("utf-8")
-                                            sequence_number += 1
-                                            function_call_item_sent = True
-                                            logger.info(f"📤 Sent function_call output_item.added (index {current_output_index})")
+                                            },
+                                        )
+                                        yield function_event
+                                        sequence_number += 1
+                                        active_item_type = "function_call"
 
-                                    # Handle content tokens - send as message item
-                                    elif delta.get("content") and not function_call_item_sent and not reasoning_item_sent:
-                                        # Regular message response (no reasoning, no tool_calls)
-                                        message_added = {
-                                            "type": "response.output_item.added",
+                                if delta.get("content") and active_item_type is None and not reasoning_item_sent:
+                                    message_item_id = f"msg_{response_id}" if response_id else "msg_0"
+                                    message_added_event = sse_event(
+                                        "response.output_item.added",
+                                        {
                                             "sequence_number": sequence_number,
                                             "output_index": current_output_index,
                                             "item": {
-                                                "id": f"msg_{response_id}" if response_id else "msg_0",
+                                                "id": message_item_id,
                                                 "type": "message",
                                                 "role": "assistant",
                                                 "content": [],
                                             },
-                                        }
-                                        yield f"data: {json.dumps(message_added)}\n\n".encode("utf-8")
-                                        sequence_number += 1
-                                        function_call_item_sent = True  # Reuse flag to prevent re-sending
-                                        logger.info(f"📤 Sent message output_item.added (index {current_output_index})")
+                                        },
+                                    )
+                                    yield message_added_event
+                                    sequence_number += 1
+                                    active_item_type = "message"
 
-                                    if delta.get("content"):
-                                        transformed = {
-                                            "type": "response.output_text.delta",
+                                if delta.get("content") and sent_created:
+                                    message_item_id = message_item_id or (f"msg_{response_id}" if response_id else "msg_0")
+                                    text_event = sse_event(
+                                        "response.output_text.delta",
+                                        {
                                             "sequence_number": sequence_number,
-                                            "item_id": f"msg_{response_id}" if response_id else "msg_0",
+                                            "item_id": message_item_id,
                                             "delta": delta["content"],
-                                        }
-                                        yield f"data: {json.dumps(transformed)}\n\n".encode("utf-8")
-                                        sequence_number += 1
-                                    elif delta.get("tool_calls"):
-                                        for tool_call in delta["tool_calls"]:
-                                            function_data = tool_call.get("function", {})
-                                            arguments = function_data.get("arguments")
-                                            if arguments:
-                                                tool_delta = {
-                                                    "type": "response.function_call.arguments.delta",
+                                        },
+                                    )
+                                    yield text_event
+                                    sequence_number += 1
+
+                                if delta.get("tool_calls") and function_call_item_id:
+                                    for tool_call in delta["tool_calls"]:
+                                        function_data = tool_call.get("function", {})
+                                        arguments = function_data.get("arguments")
+                                        if arguments:
+                                            args_event = sse_event(
+                                                "response.function_call.arguments.delta",
+                                                {
                                                     "sequence_number": sequence_number,
-                                                    "item_id": function_call_item_id or "call_0",
+                                                    "output_index": current_output_index,
+                                                    "tool_call_index": tool_call.get("index", 0),
+                                                    "item_id": function_call_item_id,
+                                                    "call_id": function_call_item_id,
                                                     "delta": arguments,
-                                                }
-                                                yield f"data: {json.dumps(tool_delta)}\n\n".encode("utf-8")
-                                                sequence_number += 1
-                                    elif choices[0].get("finish_reason"):
-                                        # Send output_item.done for function_call if it was sent
-                                        if function_call_item_sent:
-                                            # Need to get the call_id from accumulated data
-                                            function_call_done = {
-                                                "type": "response.output_item.done",
+                                                },
+                                            )
+                                            yield args_event
+                                            sequence_number += 1
+                                            function_arguments_chunks.append(arguments)
+
+                                if finish_reason:
+                                    tool_call_result_text: Optional[str] = None
+                                    if finish_reason == "tool_calls" and function_arguments_chunks:
+                                        arguments_json = "".join(function_arguments_chunks)
+                                        try:
+                                            call_payload = json.loads(arguments_json)
+                                        except json.JSONDecodeError as exc:
+                                            logger.error(f"Failed to parse tool arguments: {exc}")
+                                            call_payload = None
+
+                                        if isinstance(call_payload, dict):
+                                            command = call_payload.get("command") or []
+                                            timeout_ms = call_payload.get("timeout_ms")
+                                            cwd = call_payload.get("workdir") or call_payload.get("cwd")
+                                            env = call_payload.get("env") or {}
+                                            if isinstance(command, list) and command:
+                                                try:
+                                                    logger.info(
+                                                        "⚙️ Executing tool call locally",
+                                                        extra={
+                                                            "command": command,
+                                                            "cwd": cwd,
+                                                            "timeout_ms": timeout_ms,
+                                                        },
+                                                    )
+                                                    proc = await asyncio.create_subprocess_exec(
+                                                        *command,
+                                                        cwd=cwd,
+                                                        env={**os.environ, **{str(k): str(v) for k, v in env.items()}},
+                                                        stdout=asyncio.subprocess.PIPE,
+                                                        stderr=asyncio.subprocess.PIPE,
+                                                    )
+                                                    try:
+                                                        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                                                            proc.communicate(),
+                                                            timeout=(timeout_ms / 1000) if timeout_ms else None,
+                                                        )
+                                                        timed_out = False
+                                                    except asyncio.TimeoutError:
+                                                        proc.kill()
+                                                        stdout_bytes, stderr_bytes = await proc.communicate()
+                                                        timed_out = True
+
+                                                    stdout_text = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+                                                    stderr_text = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+                                                    exit_code = proc.returncode
+                                                    parts = ["# Shell Output"]
+                                                    parts.append(f"Command: {' '.join(command)}")
+                                                    parts.append(f"Exit code: {exit_code}")
+                                                    if timed_out:
+                                                        parts.append("Result: ⏰ Timed out")
+                                                    if stdout_text.strip():
+                                                        parts.append("STDOUT:\n" + stdout_text.strip())
+                                                    if stderr_text.strip():
+                                                        parts.append("STDERR:\n" + stderr_text.strip())
+                                                    tool_call_result_text = "\n\n".join(parts)
+                                                except Exception as exec_exc:
+                                                    logger.error(f"Failed to execute tool call: {exec_exc}")
+                                                    tool_call_result_text = f"Shell command execution failed: {exec_exc}"
+                                            else:
+                                                tool_call_result_text = "Shell command execution skipped (no command provided)."
+                                        else:
+                                            tool_call_result_text = "Shell command execution skipped (invalid arguments)."
+                                        function_arguments_chunks.clear()
+
+                                    if active_item_type == "function_call":
+                                        done_event = sse_event(
+                                            "response.output_item.done",
+                                            {
                                                 "sequence_number": sequence_number,
                                                 "output_index": current_output_index,
                                                 "item": {
+                                                    "id": function_call_item_id or "call_0",
                                                     "type": "function_call",
+                                                    "name": function_call_name or "unknown",
+                                                    "call_id": function_call_item_id or "call_0",
                                                     "status": "completed",
                                                 },
-                                            }
-                                            yield f"data: {json.dumps(function_call_done)}\n\n".encode("utf-8")
-                                            sequence_number += 1
-                                            logger.info(f"📤 Sent function_call output_item.done (index {current_output_index})")
-
-                                        completion = {
-                                            "type": "response.completed",
-                                            "sequence_number": sequence_number,
-                                            "response": {
-                                                "id": response_id or chunk_data.get("id", ""),
-                                                "status": "completed",
                                             },
-                                        }
-                                        yield f"data: {json.dumps(completion)}\n\n".encode("utf-8")
+                                        )
+                                        yield done_event
                                         sequence_number += 1
-                                        yield b"\n"
+
+                                    if finish_reason == "tool_calls" and tool_call_result_text is not None:
+                                        current_output_index = max(current_output_index + 1, 2)
+                                        if not message_item_id:
+                                            message_item_id = f"msg_{response_id}" if response_id else f"msg_{uuid4().hex}"
+                                            message_added_event = sse_event(
+                                                "response.output_item.added",
+                                                {
+                                                    "sequence_number": sequence_number,
+                                                    "output_index": current_output_index,
+                                                    "item": {
+                                                        "id": message_item_id,
+                                                        "type": "message",
+                                                        "role": "assistant",
+                                                        "status": "in_progress",
+                                                        "content": [],
+                                                    },
+                                                },
+                                            )
+                                            yield message_added_event
+                                            sequence_number += 1
+                                        text_event = sse_event(
+                                            "response.output_text.delta",
+                                            {
+                                                "sequence_number": sequence_number,
+                                                "item_id": message_item_id,
+                                                "output_index": current_output_index,
+                                                "content_index": 0,
+                                                "delta": tool_call_result_text,
+                                            },
+                                        )
+                                        yield text_event
+                                        sequence_number += 1
+                                        message_done_event = sse_event(
+                                            "response.output_item.done",
+                                            {
+                                                "sequence_number": sequence_number,
+                                                "output_index": current_output_index,
+                                                "item": {
+                                                    "id": message_item_id,
+                                                    "type": "message",
+                                                    "status": "completed",
+                                                },
+                                            },
+                                        )
+                                        yield message_done_event
+                                        sequence_number += 1
+                                        active_item_type = None
+
+                                    if active_item_type == "message":
+                                        message_item_id = message_item_id or (f"msg_{response_id}" if response_id else "msg_0")
+                                        message_done_event = sse_event(
+                                            "response.output_item.done",
+                                            {
+                                                "sequence_number": sequence_number,
+                                                "output_index": current_output_index,
+                                                "item": {
+                                                    "id": message_item_id,
+                                                    "type": "message",
+                                                    "status": "completed",
+                                                },
+                                            },
+                                        )
+                                        yield message_done_event
+                                        sequence_number += 1
+
+                                    if response_id and not completion_sent:
+                                        completed_meta = dict(response_metadata_cache)
+                                        completed_meta["status"] = "completed"
+                                        completion_event = sse_event(
+                                            "response.completed",
+                                            {
+                                                "sequence_number": sequence_number,
+                                                "response": completed_meta,
+                                            },
+                                        )
+                                        yield completion_event
+                                        sequence_number += 1
+                                        completion_sent = True
+                                    active_item_type = None
                     finally:
                         if cleanup_stack is not None:
                             await cleanup_stack.aclose()
