@@ -49,6 +49,8 @@ from curl_cffi import requests
 
 from .cerebras_middleware import CerebrasMiddleware
 
+from .chat_colorizer import apply_claude_colors
+
 logger = logging.getLogger(__name__)
 
 class LLMExecutionMiddleware:
@@ -1142,8 +1144,13 @@ BEGIN EXECUTION NOW:
             self._active_responses.append(response)
 
             # Create streaming response with automatic cleanup tracking
+            body_stream = stream_source
+            content_type = resp_headers.get("content-type", "")
+            if "text/event-stream" in content_type and getattr(body_stream, "__anext__", None) is None:
+                body_stream = apply_claude_colors(body_stream)
+
             streaming_response = StreamingResponse(
-                stream_source,
+                body_stream,
                 status_code=response.status_code,
                 headers=resp_headers,
                 media_type=resp_headers.get("content-type", "text/event-stream")

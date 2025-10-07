@@ -16,7 +16,7 @@ def write_hook(dir_path: Path, name: str, body: str) -> Path:
     return p
 
 
-def test_pre_input_hook_modifies_upstream_body(tmp_path):
+def test_pre_input_hook_modifies_upstream_body():
     # Arrange: create a pre-input hook that injects a marker into the body
     hooks_dir = Path(".codexplus/hooks")
     hook_code = """---
@@ -69,6 +69,103 @@ class InjectMarker(Hook):
             assert isinstance(sent_body, (bytes, bytearray))
             sent_json = json.loads(sent_body)
             assert sent_json.get("hooked") is True
+    finally:
+        try:
+            hook_file.unlink(missing_ok=True)
+            if hooks_dir.exists() and not any(hooks_dir.iterdir()):
+                hooks_dir.rmdir()
+                parent = hooks_dir.parent
+                if parent.exists() and not any(parent.iterdir()):
+                    parent.rmdir()
+        except Exception:
+            pass
+
+
+def test_pre_input_hook_nested_mutation_propagates():
+    from codex_plus import main_sync_cffi
+
+    # Ensure the middleware creates a fresh session so our patch applies
+    if hasattr(main_sync_cffi.slash_middleware, "_session"):
+        delattr(main_sync_cffi.slash_middleware, "_session")
+
+    hooks_dir = Path(".codexplus/hooks")
+    hook_code = """---
+name: mutate-nested
+type: pre-input
+priority: 5
+enabled: true
+---
+from codex_plus.hooks import Hook
+
+
+def mutate_first_input_text_block(body):
+    messages = body.get('input') or []
+    if not (messages and isinstance(messages, list)):
+        return body
+    first = messages[0]
+    if not isinstance(first, dict):
+        return body
+    content = first.get('content')
+    if not (isinstance(content, list) and content):
+        return body
+    block = content[0]
+    if isinstance(block, dict) and block.get('type') == 'input_text':
+        block['text'] = f"[HOOKED] {block.get('text', '')}"
+    return body
+
+
+class MutateNested(Hook):
+    name = "mutate-nested"
+
+    async def pre_input(self, request, body):
+        return mutate_first_input_text_block(body)
+hook = MutateNested('mutate-nested', {'type': 'pre-input', 'priority': 5, 'enabled': True})
+"""
+    hook_file = write_hook(hooks_dir, "mutate_nested", hook_code)
+
+    try:
+        try:
+            hooks_mod.hook_system._load_hooks()
+        except RuntimeError as e:
+            if "Event loop is closed" in str(e):
+                hooks_mod.hook_system = hooks_mod.HookSystem()
+            else:
+                raise
+
+        client = TestClient(app)
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.iter_content.return_value = iter([b"{}"])
+
+        with patch("curl_cffi.requests.Session") as mock_session_cls:
+            mock_session = Mock()
+            mock_session.request.return_value = mock_response
+            mock_session_cls.return_value = mock_session
+
+            payload = {
+                "model": "gpt-5",
+                "instructions": "Test",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "/echo hi"}
+                        ],
+                    }
+                ],
+            }
+            r = client.post("/responses", json=payload)
+            assert r.status_code == 200
+            # Positional args are unused; the request payload lives in kwargs.
+            _args, kwargs = mock_session.request.call_args
+            sent_body = kwargs.get("data")
+            assert isinstance(sent_body, (bytes, bytearray))
+            sent_json = json.loads(sent_body)
+            nested_text = sent_json["input"][0]["content"][0]["text"]
+            assert "[HOOKED]" in nested_text
     finally:
         try:
             hook_file.unlink(missing_ok=True)

@@ -33,11 +33,15 @@ VENV_PATH="$SCRIPT_DIR/venv"
 PROXY_MODULE="main_sync_cffi"
 # Runtime files under /tmp/codex_plus
 RUNTIME_DIR="/tmp/codex_plus"
+if [ -n "${CODEX_PROXY_RUNTIME_DIR:-}" ]; then
+    RUNTIME_DIR="$CODEX_PROXY_RUNTIME_DIR"
+fi
 # Port configuration must be set before PID file paths
 PROXY_PORT="${PROXY_PORT:-10000}"
 PID_FILE="$RUNTIME_DIR/proxy_${PROXY_PORT}.pid"
 LOG_FILE="$RUNTIME_DIR/proxy_${PROXY_PORT}.log"
 LOCK_FILE="$RUNTIME_DIR/proxy_${PROXY_PORT}.lock"
+BASE_URL_FILE="$RUNTIME_DIR/provider.base_url"
 # Autostart configuration
 AUTOSTART_LABEL="com.codex.plus.proxy"
 LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
@@ -134,21 +138,31 @@ configure_provider_environment() {
         export OPENAI_API_KEY="$CEREBRAS_API_KEY"
         export OPENAI_BASE_URL="$CEREBRAS_BASE_URL"
         export OPENAI_MODEL="$CEREBRAS_MODEL"
+        printf '%s\n' "$CEREBRAS_BASE_URL" > "$BASE_URL_FILE"
         echo -e "${BLUE}🌐 Cerebras mode enabled - proxy will use Cerebras credentials${NC}"
     else
         export CODEX_PLUS_PROVIDER_MODE="openai"
         export CODEX_PLUS_UPSTREAM_URL="$DEFAULT_UPSTREAM_URL"
+        printf '%s\n' "$DEFAULT_UPSTREAM_URL" > "$BASE_URL_FILE"
     fi
     echo "$PROVIDER_MODE" > "$RUNTIME_DIR/provider.mode"
 }
 
 get_upstream_url() {
-    # Read from environment variable set by setup_provider_env
+    if [ -f "$BASE_URL_FILE" ]; then
+        local upstream
+        if read -r upstream < "$BASE_URL_FILE" 2>/dev/null && [ -n "$upstream" ]; then
+            printf '%s' "$upstream"
+            return
+        fi
+    fi
+
     if [ -n "$CODEX_PLUS_UPSTREAM_URL" ]; then
         printf '%s' "$CODEX_PLUS_UPSTREAM_URL"
-    else
-        printf '%s' "$DEFAULT_UPSTREAM_URL"
+        return
     fi
+
+    printf '%s' "$DEFAULT_UPSTREAM_URL"
 }
 
 validate_pid() {
@@ -183,13 +197,60 @@ cleanup_stale_resources() {
     fi
 
     # Clean up any orphaned proxy process on THIS port only
-    local orphaned_pids=$(lsof -ti :$PROXY_PORT 2>/dev/null || true)
+    local orphaned_pids
+    orphaned_pids=$(lsof -ti :"$PROXY_PORT" 2>/dev/null || true)
     if [ -n "$orphaned_pids" ]; then
         echo -e "${YELLOW}🧹 Found orphaned proxy process on port $PROXY_PORT: $orphaned_pids${NC}"
         echo "$orphaned_pids" | xargs -r kill -TERM 2>/dev/null || true
         sleep 2
         echo "$orphaned_pids" | xargs -r kill -KILL 2>/dev/null || true
     fi
+}
+
+PORT_GUARD_EXIT_CODE=""
+PORT_GUARD_OUTPUT=""
+
+run_port_guard() {
+    if [ -n "${CODEX_PROXY_GUARD_STATE:-}" ]; then
+        case "$CODEX_PROXY_GUARD_STATE" in
+            owned_by_proxy) PORT_GUARD_EXIT_CODE=0 ;;
+            free) PORT_GUARD_EXIT_CODE=10 ;;
+            occupied_other) PORT_GUARD_EXIT_CODE=20 ;;
+            unknown) PORT_GUARD_EXIT_CODE=30 ;;
+            *) PORT_GUARD_EXIT_CODE=30 ;;
+        esac
+        PORT_GUARD_OUTPUT="{\"state\": \"${CODEX_PROXY_GUARD_STATE}\"}"
+        return 0
+    fi
+
+    local python_cmd=("python3")
+    if [ -n "${PYTHON:-}" ]; then
+        python_cmd=("${PYTHON}")
+    elif ! command -v python3 >/dev/null 2>&1; then
+        python_cmd=("python")
+    fi
+
+    local env_pythonpath="$SCRIPT_DIR/src"
+    if [ -n "${PYTHONPATH:-}" ]; then
+        env_pythonpath="$env_pythonpath:$PYTHONPATH"
+    fi
+
+    PORT_GUARD_OUTPUT=$(PYTHONPATH="$env_pythonpath" "${python_cmd[@]}" -m codex_plus.port_guard \
+        --port "$PROXY_PORT" \
+        --health-url "http://127.0.0.1:$PROXY_PORT/health" \
+        --health-timeout 1.0 \
+        --expect codex_plus \
+        --expect main_sync_cffi \
+        --expect uvicorn \
+        --json 2>/dev/null)
+    PORT_GUARD_EXIT_CODE=$?
+    if [ -z "$PORT_GUARD_OUTPUT" ]; then
+        PORT_GUARD_OUTPUT="{\"state\": \"unknown\"}"
+    fi
+    case "$PORT_GUARD_EXIT_CODE" in
+        0|10|20|30) :;;
+        *) PORT_GUARD_EXIT_CODE=30 ;;
+    esac
 }
 
 print_status() {
@@ -269,12 +330,32 @@ start_proxy() {
     startup_success=false
     trap 'if [ "${startup_success:-false}" != true ]; then rm -f "$LOCK_FILE"; fi' EXIT
 
-    # Check if already running (after acquiring lock)
     if [ "${FORCE_RESTART}" = "true" ]; then
         echo -e "${YELLOW}♻️  Force restart requested (${PROVIDER_MODE} mode) - continuing${NC}"
-    elif print_status >/dev/null 2>&1; then
-        echo -e "${YELLOW}⚠️  Proxy is already running${NC}"
-        return 0
+    else
+        run_port_guard
+        case "${PORT_GUARD_EXIT_CODE:-}" in
+            0)
+                echo -e "${YELLOW}⚠️  Proxy already running on port ${PROXY_PORT}; skipping start${NC}"
+                startup_success=true
+                rm -f "$LOCK_FILE"
+                trap - EXIT
+                return 0
+                ;;
+            20)
+                echo -e "${RED}❌ Port ${PROXY_PORT} is in use by another process; refusing to start${NC}"
+                echo -e "${YELLOW}ℹ️  Port guard details:${NC} ${PORT_GUARD_OUTPUT}"
+                rm -f "$LOCK_FILE"
+                trap - EXIT
+                return 1
+                ;;
+            30)
+                echo -e "${YELLOW}⚠️  Unable to determine port ownership; continuing with startup${NC}"
+                ;;
+            *)
+                :
+                ;;
+        esac
     fi
 
     # Kill existing proxy processes instead of waiting for locks
@@ -298,6 +379,8 @@ start_proxy() {
 
         sleep 2
     done
+
+    pkill -f "uvicorn.*codex_plus" 2>/dev/null || true
 
     # Final check - if still running, force kill
     if lsof -i :$PROXY_PORT >/dev/null 2>&1; then
@@ -327,7 +410,7 @@ start_proxy() {
         return 1
     fi
 
-    # Port 10000 should now be available after cleanup above
+    # Port $PROXY_PORT should now be available after cleanup above
 
     # Validate provider configuration before launching
     if ! configure_provider_environment; then

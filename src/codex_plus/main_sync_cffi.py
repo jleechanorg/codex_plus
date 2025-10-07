@@ -35,7 +35,6 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from curl_cffi import requests
 import logging
 import json as _json
-import json
 import sys
 import os
 import time
@@ -232,7 +231,19 @@ async def proxy(request: Request, path: str):
         try:
             body_dict = _json.loads(body)
             modified = await process_pre_input_hooks(request, body_dict)
-            if modified != body_dict:
+
+            # Hooks may mutate the provided body in place or return a new object
+            if modified is None:
+                modified = body_dict
+
+            body_changed = False
+            if modified is body_dict:
+                original_body_snapshot = _json.loads(body)
+                body_changed = modified != original_body_snapshot
+            else:
+                body_changed = True
+
+            if body_changed:
                 # stash modified body for downstream middleware
                 try:
                     request.state.modified_body = _json.dumps(modified).encode('utf-8')
