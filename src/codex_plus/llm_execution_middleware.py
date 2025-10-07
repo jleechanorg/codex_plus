@@ -39,6 +39,8 @@ from typing import Dict, List, Optional, Tuple
 import re
 from fastapi.responses import JSONResponse
 
+from .chat_colorizer import apply_claude_colors
+
 logger = logging.getLogger(__name__)
 
 class LLMExecutionMiddleware:
@@ -425,8 +427,13 @@ BEGIN EXECUTION NOW:
             self._active_responses.append(response)
 
             # Create streaming response with automatic cleanup tracking
+            body_stream = stream_response()
+            content_type = resp_headers.get("content-type", "")
+            if "text/event-stream" in content_type:
+                body_stream = apply_claude_colors(body_stream)
+
             streaming_response = StreamingResponse(
-                stream_response(),
+                body_stream,
                 status_code=response.status_code,
                 headers=resp_headers,
                 media_type=resp_headers.get("content-type", "text/event-stream")
