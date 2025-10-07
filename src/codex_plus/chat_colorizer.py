@@ -1,4 +1,4 @@
-"""Utilities for colouring streaming chat output like Claude Code CLI."""
+"""Utilities for coloring streaming chat output like Claude Code CLI."""
 
 from __future__ import annotations
 
@@ -17,35 +17,57 @@ class ChoiceState:
 
 
 class ClaudeSSEColorizer:
-    """Inject Claude CLI ANSI colours into streamed SSE chat payloads."""
+    """Inject Claude CLI ANSI colors into streamed SSE chat payloads."""
 
     def __init__(self, role_colors: Optional[Mapping[str, str]] = None) -> None:
         self._role_colors = ensure_role_colors(role_colors)
         self._choice_state: Dict[int, ChoiceState] = {}
-        self._buffer = ""
+        self._buffer = bytearray()
 
     def iter_colorized(self, chunks: Iterable[bytes]) -> Iterator[bytes]:
-        """Yield colourised SSE chunks from an iterable of raw chunks."""
+        """Yield colorized SSE chunks from an iterable of raw chunks."""
+
+        delimiter = b"\n\n"
+        alt_delimiter = b"\r\n\r\n"
 
         for chunk in chunks:
             if not chunk:
                 continue
-            text = chunk.decode("utf-8", errors="ignore")
-            self._buffer += text
+            self._buffer.extend(chunk)
 
-            while "\n\n" in self._buffer:
-                event_text, self._buffer = self._buffer.split("\n\n", 1)
-                yield self._process_event(event_text)
+            while True:
+                index = self._buffer.find(delimiter)
+                delim_len = len(delimiter)
+                delim_bytes = delimiter
+                if index == -1:
+                    index = self._buffer.find(alt_delimiter)
+                    if index == -1:
+                        break
+                    delim_len = len(alt_delimiter)
+                    delim_bytes = alt_delimiter
+                event_bytes = self._buffer[:index]
+                # Remove the delimiter from the buffer
+                self._buffer = self._buffer[index + delim_len :]
+                yield self._process_event(event_bytes, delim_bytes)
 
         if self._buffer:
-            remainder = self._buffer
-            self._buffer = ""
-            yield remainder.encode("utf-8")
+            remainder = bytes(self._buffer)
+            self._buffer.clear()
+            yield remainder
 
-    def _process_event(self, event_text: str) -> bytes:
+    def _process_event(self, event_bytes: bytes, delimiter: bytes = b"\n\n") -> bytes:
+        try:
+            event_text = event_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            # If decoding fails, pass the original bytes through untouched.
+            return event_bytes + delimiter
+
+        delimiter_text = delimiter.decode("utf-8", errors="ignore") or "\n\n"
+        line_separator = "\r\n" if delimiter_text.endswith("\r\n\r\n") else "\n"
+
         stripped = event_text.strip()
         if not stripped:
-            return (event_text + "\n\n").encode("utf-8")
+            return (event_text + delimiter_text).encode("utf-8")
 
         lines = event_text.splitlines()
         other_lines: List[str] = []
@@ -58,24 +80,24 @@ class ClaudeSSEColorizer:
                 other_lines.append(line)
 
         if not data_lines:
-            return (event_text + "\n\n").encode("utf-8")
+            return (event_text + delimiter_text).encode("utf-8")
 
         data_payload = "\n".join(data_lines)
         if data_payload.strip() == "[DONE]":
-            return (event_text + "\n\n").encode("utf-8")
+            return (event_text + delimiter_text).encode("utf-8")
 
         try:
             parsed = json.loads(data_payload)
         except json.JSONDecodeError:
-            return (event_text + "\n\n").encode("utf-8")
+            return (event_text + delimiter_text).encode("utf-8")
 
         modified = self._colorize_payload(parsed)
         if not modified:
-            return (event_text + "\n\n").encode("utf-8")
+            return (event_text + delimiter_text).encode("utf-8")
 
         new_payload = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
         serialized_lines = other_lines + [f"data: {line}" for line in new_payload.split("\n")]
-        return ("\n".join(serialized_lines) + "\n\n").encode("utf-8")
+        return (line_separator.join(serialized_lines) + delimiter_text).encode("utf-8")
 
     def _colorize_payload(self, payload: object) -> bool:
         if not isinstance(payload, dict):
@@ -172,8 +194,6 @@ class ClaudeSSEColorizer:
                 if isinstance(function, dict):
                     if self._apply_color_to_field(function, "name", "tool"):
                         modified = True
-                    if self._apply_color_to_field(function, "arguments", "observation"):
-                        modified = True
         return modified
 
     def _apply_color_to_field(self, container: Dict, key: str, role: str) -> bool:
@@ -197,7 +217,7 @@ class ClaudeSSEColorizer:
 
 
 def apply_claude_colors(chunks: Iterable[bytes], role_colors: Optional[Mapping[str, str]] = None) -> Iterator[bytes]:
-    """Apply Claude CLI colour theming to an iterable of SSE chunks."""
+    """Apply Claude CLI color theming to an iterable of SSE chunks."""
 
     colorizer = ClaudeSSEColorizer(role_colors)
     return colorizer.iter_colorized(chunks)

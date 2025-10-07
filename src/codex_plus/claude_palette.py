@@ -1,9 +1,9 @@
 """Shared Claude Code CLI palette helpers.
 
-This module centralises the 24-bit ANSI escape sequences that emulate the
-official Claude Code CLI brand colours.  It exposes convenience utilities for
+This module centralizes the 24-bit ANSI escape sequences that emulate the
+official Claude Code CLI brand colors.  It exposes convenience utilities for
 converting hex triplets to escape sequences, stripping ANSI codes, and mapping
-chat roles to their canonical colours so other modules (chat streaming,
+chat roles to their canonical colors so other modules (chat streaming,
 status-line renderers, etc.) can stay consistent.
 """
 
@@ -19,7 +19,7 @@ ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _rgb_escape(r: int, g: int, b: int) -> str:
-    """Return a 24-bit ANSI foreground colour escape sequence."""
+    """Return a 24-bit ANSI foreground color escape sequence."""
 
     return f"\x1b[38;2;{r};{g};{b}m"
 
@@ -29,7 +29,7 @@ def hex_to_ansi(hex_color: str) -> str:
 
     hex_color = hex_color.strip().lstrip("#")
     if len(hex_color) != 6:
-        raise ValueError(f"Invalid hex colour value: {hex_color!r}")
+        raise ValueError(f"Invalid hex color value: {hex_color!r}")
     r = int(hex_color[0:2], 16)
     g = int(hex_color[2:4], 16)
     b = int(hex_color[4:6], 16)
@@ -57,7 +57,7 @@ class ChatPalette:
         return mapping.get(fallback_role, next(iter(mapping.values())))
 
 
-# Claude Code CLI role colours derived from sampled CLI output frames.  The
+# Claude Code CLI role colors derived from sampled CLI output frames.  The
 # palette balances readability with the brand accents Anthropic ship in the
 # official tool: lavender for Claude, cyan for the user, amber for tools, and a
 # muted mint for observations.
@@ -85,7 +85,7 @@ def ensure_role_colors(mapping: Optional[Mapping[str, str]] = None) -> Mapping[s
 
 
 def apply_color(text: str, color: str) -> str:
-    """Wrap *text* in the provided ANSI colour while guarding duplicates."""
+    """Wrap *text* in the provided ANSI color while guarding duplicates."""
 
     if not text or "\x1b[" in text:
         return text
