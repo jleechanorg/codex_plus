@@ -1,3 +1,5 @@
+"""Utilities for determining whether the Codex proxy already owns a port."""
+
 from __future__ import annotations
 
 import argparse
@@ -27,6 +29,8 @@ class PortGuardError(RuntimeError):
 
 
 class PortState(str, Enum):
+    """Possible ownership states for a TCP port."""
+
     FREE = "free"
     OWNED_BY_PROXY = "owned_by_proxy"
     OCCUPIED_OTHER = "occupied_other"
@@ -35,16 +39,22 @@ class PortState(str, Enum):
 
 @dataclass(frozen=True)
 class ProcessInfo:
+    """Minimal representation of a process claimed by ``lsof``."""
+
     pid: int
     command: str
 
 
 @dataclass(frozen=True)
 class PortCheckResult:
+    """Outcome of a port ownership check."""
+
     state: PortState
     processes: tuple[ProcessInfo, ...]
 
     def to_dict(self) -> dict[str, object]:
+        """Render the result as a JSON-serialisable dictionary."""
+
         return {
             "state": self.state.value,
             "processes": [
@@ -55,7 +65,9 @@ class PortCheckResult:
 
 
 def _run_lsof(port: int) -> list[ProcessInfo]:
-    command = list(_LSOF_COMMAND) + [f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpc"]
+    """Return listening processes for ``port`` using ``lsof`` in list format."""
+
+    command = [*_LSOF_COMMAND, f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpc"]
     try:
         proc = subprocess.run(  # noqa: S603 - controlled command, arguments list
             command,
@@ -99,6 +111,8 @@ def _run_lsof(port: int) -> list[ProcessInfo]:
 
 
 def _probe_health(url: str, timeout: float = 1.0) -> bool:
+    """Check whether ``url`` responds with a 2xx status within ``timeout`` seconds."""
+
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - intentional
             if response.status >= 200 and response.status < 300:
@@ -109,6 +123,8 @@ def _probe_health(url: str, timeout: float = 1.0) -> bool:
 
 
 def _matches_expected(process: ProcessInfo, expected_markers: Iterable[str]) -> bool:
+    """Return ``True`` if the process command contains any of the expected markers."""
+
     haystack = process.command.lower()
     return any(marker.lower() in haystack for marker in expected_markers)
 
@@ -120,6 +136,8 @@ def check_port_ownership(
     health_url: str | None = None,
     health_timeout: float = 1.0,
 ) -> PortCheckResult:
+    """Determine who owns ``port`` using command markers and an optional health probe."""
+
     markers = expected_markers or _DEFAULT_EXPECTED_MARKERS
     try:
         processes = tuple(_run_lsof(port))
@@ -149,6 +167,8 @@ _EXIT_CODE_BY_STATE = {
 
 
 def _cli() -> int:
+    """Entry point for the ``python -m codex_plus.port_guard`` command."""
+
     parser = argparse.ArgumentParser(description="Inspect ownership of the Codex proxy port")
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--expect", action="append", dest="expected", default=[])
@@ -176,6 +196,8 @@ def _cli() -> int:
 
 
 def main() -> None:  # pragma: no cover - simple wrapper
+    """Console script wrapper for the port guard CLI."""
+
     sys.exit(_cli())
 
 
