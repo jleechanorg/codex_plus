@@ -34,6 +34,7 @@ Breaking these rules WILL break all Codex functionality.
 import json
 import logging
 import os
+import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import re
@@ -48,6 +49,8 @@ class LLMExecutionMiddleware:
 
     # Class-level lock to prevent race condition in session initialization
     _session_init_lock = __import__('threading').Lock()
+    _RETRY_DELAYS: Tuple[float, ...] = (0.5,)  # seconds
+    _MAX_STREAM_ERROR_MESSAGE = 240
 
     def __init__(self, upstream_url: str):
         self.upstream_url = upstream_url
@@ -55,6 +58,7 @@ class LLMExecutionMiddleware:
         self.commands_dir = self.claude_dir / "commands" if self.claude_dir else None
         self.codexplus_dir = Path(".codexplus/commands")
         self.home_codexplus_dir = Path.home() / ".codexplus" / "commands"
+        self._retry_schedule = self._RETRY_DELAYS
         
     def _find_claude_dir(self) -> Optional[Path]:
         """Find .claude directory in project hierarchy"""
@@ -379,42 +383,72 @@ BEGIN EXECUTION NOW:
             session = self._session
 
             # 🔒 PROTECTED: Core request forwarding - DO NOT CHANGE
-            response = session.request(
-                request.method,
-                target_url,
-                headers=clean_headers,
-                data=body if body else None,
-                stream=True,
-                timeout=30
-            )
+            response = None
+            attempt = 0
+            retry_schedule = self._retry_schedule
+            last_exception: Optional[Exception] = None
+            while True:
+                try:
+                    response = session.request(
+                        request.method,
+                        target_url,
+                        headers=clean_headers,
+                        data=body if body else None,
+                        stream=True,
+                        timeout=30
+                    )
+                    break
+                except requests.exceptions.RequestException as exc:
+                    last_exception = exc
+                    if attempt >= len(retry_schedule):
+                        raise
+                    delay = retry_schedule[attempt]
+                    attempt += 1
+                    logger.warning(
+                        "Upstream request failed (%s). Retrying in %.1fs (attempt %d/%d)",
+                        exc,
+                        delay,
+                        attempt,
+                        len(retry_schedule) + 1,
+                    )
+                    await asyncio.sleep(delay)
+            content_type = response.headers.get("content-type", "") or ""
+            is_event_stream = "text/event-stream" in content_type.lower()
             
             # 🔒 PROTECTED: Streaming response generator - CRITICAL for real-time responses
             # Enhanced with proper resource cleanup to prevent connection leaks
             def stream_response():
                 response_closed = False
+
+                def close_response():
+                    nonlocal response_closed
+                    if not response_closed:
+                        try:
+                            response.close()
+                        except Exception:
+                            pass
+                        else:
+                            response_closed = True
+
                 try:
                     # 🔒 PROTECTED: Core streaming iteration - DO NOT MODIFY
                     for chunk in response.iter_content(chunk_size=None):
                         if chunk:
                             # 🔒 PROTECTED: Chunk yielding - DO NOT REMOVE
                             yield chunk
-                except Exception as e:
-                    logger.error(f"Error during streaming: {e}")
-                    # Ensure response is closed on error
-                    if not response_closed:
-                        try:
-                            response.close()
-                            response_closed = True
-                        except:
-                            pass
+                except Exception as exc:
+                    logger.error(f"Error during streaming: {exc}")
+                    if isinstance(exc, requests.exceptions.RequestException):
+                        if is_event_stream:
+                            error_code, safe_message = self._classify_stream_error(exc)
+                            error_chunk = self._format_stream_error_event(error_code, safe_message)
+                            close_response()
+                            yield error_chunk
+                            return
+                    close_response()
                     raise
                 finally:
-                    # Ensure response is always closed
-                    if not response_closed:
-                        try:
-                            response.close()
-                        except:
-                            pass
+                    close_response()
             
             # Get response headers
             resp_headers = dict(response.headers)
@@ -460,6 +494,25 @@ BEGIN EXECUTION NOW:
                 content={"error": f"Proxy failed: {str(e)}"},
                 status_code=500
             )
+
+    @classmethod
+    def _classify_stream_error(cls, exc: Exception) -> Tuple[str, str]:
+        """Classify upstream streaming errors for structured reporting."""
+        message = str(exc).strip() or exc.__class__.__name__
+        if len(message) > cls._MAX_STREAM_ERROR_MESSAGE:
+            message = message[: cls._MAX_STREAM_ERROR_MESSAGE - 3] + "..."
+        lower_msg = message.lower()
+        if "timeout" in lower_msg or "too slow" in lower_msg:
+            code = "UPSTREAM_TIMEOUT"
+        else:
+            code = "UPSTREAM_ERROR"
+        return code, message
+
+    @staticmethod
+    def _format_stream_error_event(code: str, message: str) -> bytes:
+        """Create an SSE payload describing a streaming error."""
+        payload = {"type": "error", "code": code, "message": message}
+        return f"data: {json.dumps(payload)}\n\n".encode("utf-8")
 
 
 def create_llm_execution_middleware(upstream_url: str):

@@ -61,6 +61,12 @@ async def lifespan(app: FastAPI):
 
         yield
     finally:
+        # Stop background status updates first to avoid lingering tasks
+        try:
+            await hook_middleware.stop_background_status_update()
+        except Exception as e:
+            logger.debug(f"Failed to stop background status updates: {e}")
+
         # Session end hooks
         try:
             from .hooks import settings_session_end

@@ -229,7 +229,8 @@ class HookSystem:
         }
         code, out, err, _ = await self._run_command_hook(cfg["command"], payload, cfg.get("timeout", 2))
         text = (out or err or "").strip()
-        if not text or text.lower().startswith('hook timed out'):
+        lowered = text.lower()
+        if not text or lowered.startswith('hook timed out') or lowered.startswith('hook failed'):
             return await self._git_status_line_fallback(working_directory)
         lines = [ln for ln in text.splitlines() if ln.strip()]
         # Prefer a bracketed header with Dir/Local/Remote if present
@@ -627,10 +628,24 @@ class HookSystem:
                 cwd=project_dir
             )
 
+            async def _terminate_proc():
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                except Exception as exc:
+                    logger.debug(f"Failed to kill hook process: {exc}")
+                try:
+                    await proc.wait()
+                except Exception as exc:
+                    logger.debug(f"Failed to wait for hook process: {exc}")
+
+            payload_bytes = json.dumps(payload).encode()
+
             try:
                 # Use asyncio.wait_for for proper timeout handling
                 stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(input=json.dumps(payload).encode()),
+                    proc.communicate(input=payload_bytes),
                     timeout=timeout
                 )
 
@@ -647,10 +662,18 @@ class HookSystem:
                 return proc.returncode or 0, stdout_str, stderr_str, parsed
 
             except asyncio.TimeoutError:
-                # Kill the process and wait for it to terminate
-                proc.kill()
-                await proc.wait()
+                await _terminate_proc()
                 return 124, "", "Hook timed out", None
+            except BrokenPipeError as exc:
+                await _terminate_proc()
+                exit_code = proc.returncode if proc.returncode is not None else 1
+                return exit_code, "", f"Hook failed: {exc}", None
+            except asyncio.CancelledError:
+                await _terminate_proc()
+                raise
+            except Exception:
+                await _terminate_proc()
+                raise
 
         except Exception as e:
             return 1, "", f"Hook failed: {e}", None
