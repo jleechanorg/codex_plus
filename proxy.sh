@@ -483,6 +483,11 @@ except Exception as e:
     if [ "$startup_success" = true ]; then
         trap - EXIT
         echo -e "${GREEN}✅ Proxy started successfully and is responding${NC}"
+
+        # Enable autostart configuration
+        echo -e "${BLUE}🔄 Enabling autostart configuration...${NC}"
+        handle_autostart enable
+
         # Show status without cleanup to avoid killing the just-started process
         echo -e "${BLUE}🔍 M1 Proxy Status:${NC}"
         echo -e "  ${GREEN}✅ Running${NC} (PID: $pid)"
@@ -579,6 +584,10 @@ stop_proxy() {
     # Clean up lock files and logging mode state for THIS port
     rm -f "$LOCK_FILE"
     rm -f "$RUNTIME_DIR/logging.mode"
+
+    # Remove autostart configuration
+    echo -e "${BLUE}🗑️  Removing autostart configuration...${NC}"
+    handle_autostart disable
 }
 
 restart_proxy() {

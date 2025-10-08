@@ -6,6 +6,9 @@ FastAPI proxy code resides under `src/codex_plus/`; keep middleware async-safe a
 ## Build, Test, and Development Commands
 Create a virtualenv with `python -m venv venv && source venv/bin/activate`, then install dependencies via `pip install -r requirements.txt`. Run the proxy locally using `./proxy.sh` for the managed workflow or `uvicorn src.codex_plus.main:app --host 127.0.0.1 --port 10000 --reload` when debugging. Execute quick checks with `pytest -q`; prefer `./run_tests.sh` before commits for the full suite and lint-adjacent sanity. Use `pytest -k <pattern>` to iterate on focused scenarios.
 
+## Provider Configuration
+When using `./proxy.sh --cerebras`, the script reads `CEREBRAS_API_KEY`, `CEREBRAS_BASE_URL`, and `CEREBRAS_MODEL` from the environment. It will automatically source `~/.bashrc` if those variables are missing, so keep the real credentials exported there instead of hardcoding them. Set `PROXY_PORT` before running the script to isolate Cerebras on a separate port from the standard Codex proxy.
+
 ## Coding Style & Naming Conventions
 Follow idiomatic modern Python with 4-space indentation, descriptive snake_case for functions, and PascalCase for classes. Keep modules small and streaming aware; never replace `curl_cffi.requests.Session(impersonate="chrome124")` or the upstream URL `https://chatgpt.com/backend-api/codex`. Leverage existing `logging` instances at INFO for lifecycle events and DEBUG for deep traces; avoid print statements in production paths.
 

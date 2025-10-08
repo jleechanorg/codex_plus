@@ -126,6 +126,11 @@ codex  # Now uses proxy
 OPENAI_BASE_URL=http://localhost:10000 codex
 ```
 
+### Cerebras Provider Setup
+- Run `./proxy.sh --cerebras` after exporting `CEREBRAS_API_KEY`, `CEREBRAS_BASE_URL`, and `CEREBRAS_MODEL`.
+- The script automatically sources `~/.bashrc` when those variables are absent, so store the real credentials there and never check them into the repo.
+- Set `PROXY_PORT` before launching if you need the Cerebras proxy listening on a different port than the default Codex proxy.
+
 ### Testing and Validation
 ```bash
 # Health check
