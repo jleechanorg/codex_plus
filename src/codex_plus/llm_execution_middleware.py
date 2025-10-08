@@ -419,50 +419,36 @@ BEGIN EXECUTION NOW:
             # Enhanced with proper resource cleanup to prevent connection leaks
             def stream_response():
                 response_closed = False
+
+                def close_response():
+                    nonlocal response_closed
+                    if not response_closed:
+                        try:
+                            response.close()
+                        except Exception:
+                            pass
+                        else:
+                            response_closed = True
+
                 try:
                     # 🔒 PROTECTED: Core streaming iteration - DO NOT MODIFY
                     for chunk in response.iter_content(chunk_size=None):
                         if chunk:
                             # 🔒 PROTECTED: Chunk yielding - DO NOT REMOVE
                             yield chunk
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"Error during streaming: {e}")
-                    if is_event_stream:
-                        error_code, safe_message = self._classify_stream_error(e)
-                        error_chunk = self._format_stream_error_event(error_code, safe_message)
-                        if not response_closed:
-                            try:
-                                response.close()
-                            except Exception:
-                                pass
-                            else:
-                                response_closed = True
-                        yield error_chunk
-                        return
-                    if not response_closed:
-                        try:
-                            response.close()
-                            response_closed = True
-                        except Exception:
-                            pass
-                    raise
-                except Exception as e:
-                    logger.error(f"Error during streaming: {e}")
-                    # Ensure response is closed on error
-                    if not response_closed:
-                        try:
-                            response.close()
-                            response_closed = True
-                        except:
-                            pass
+                except Exception as exc:
+                    logger.error(f"Error during streaming: {exc}")
+                    if isinstance(exc, requests.exceptions.RequestException):
+                        if is_event_stream:
+                            error_code, safe_message = self._classify_stream_error(exc)
+                            error_chunk = self._format_stream_error_event(error_code, safe_message)
+                            close_response()
+                            yield error_chunk
+                            return
+                    close_response()
                     raise
                 finally:
-                    # Ensure response is always closed
-                    if not response_closed:
-                        try:
-                            response.close()
-                        except:
-                            pass
+                    close_response()
             
             # Get response headers
             resp_headers = dict(response.headers)
