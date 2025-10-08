@@ -22,6 +22,7 @@ class HookMiddleware:
         self._cached_status_line = None
         self._cache_task = None
         self._cache_lock = asyncio.Lock()
+        self._task_lock = asyncio.Lock()
 
     async def get_status_line(self, working_directory: Optional[str] = None) -> Optional[str]:
         """Get status line content without printing it"""
@@ -48,22 +49,42 @@ class HookMiddleware:
 
     async def start_background_status_update(self):
         """Start background task to update status line cache"""
-        if self._cache_task and not self._cache_task.done():
-            return
-        self._cache_task = asyncio.create_task(self._background_update_loop())
+        async with self._task_lock:
+            if self._cache_task and not self._cache_task.done():
+                return
+
+            if self._cache_task and self._cache_task.done():
+                self._cache_task = None
+
+            self._cache_task = asyncio.create_task(self._background_update_loop())
+            self._cache_task.add_done_callback(self._on_cache_task_done)
+
         logger.info("🔄 Started background status line update task")
 
     async def stop_background_status_update(self):
         """Stop background status updates and wait for clean shutdown."""
-        if not self._cache_task:
-            return
-        if not self._cache_task.done():
-            self._cache_task.cancel()
+        async with self._task_lock:
+            task = self._cache_task
+            if not task:
+                return
+            self._cache_task = None
+
+        if not task.done():
+            task.cancel()
             try:
-                await self._cache_task
+                await task
             except asyncio.CancelledError:
                 pass
-        self._cache_task = None
+
+    def _on_cache_task_done(self, task: asyncio.Task) -> None:
+        """Ensure task reference is cleared when the background updater stops."""
+        if task.cancelled():
+            logger.debug("Background status line update task cancelled")
+        elif task.exception():
+            logger.debug("Background status line update task failed: %s", task.exception())
+
+        if self._cache_task is task:
+            self._cache_task = None
 
     async def _background_update_loop(self):
         """Background loop to update status line cache every 30 seconds"""

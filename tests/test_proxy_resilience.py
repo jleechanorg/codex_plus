@@ -10,9 +10,9 @@ Covers:
 """
 import asyncio
 import json
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Optional
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -205,12 +205,15 @@ async def test_hook_middleware_stop_background_updates_cancels_task(monkeypatch)
             cancel_event.set()
             raise
 
-    middleware._background_update_loop = MethodType(fake_loop, middleware)  # type: ignore[attr-defined]
+    with patch.object(
+        middleware,
+        "_background_update_loop",
+        fake_loop.__get__(middleware, type(middleware)),
+    ):
+        await middleware.start_background_status_update()
+        await asyncio.wait_for(start_event.wait(), timeout=0.2)
 
-    await middleware.start_background_status_update()
-    await asyncio.wait_for(start_event.wait(), timeout=0.2)
-
-    await middleware.stop_background_status_update()
+        await middleware.stop_background_status_update()
 
     assert cancel_event.is_set()
     assert middleware._cache_task is None or middleware._cache_task.done()

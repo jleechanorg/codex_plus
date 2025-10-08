@@ -666,7 +666,8 @@ class HookSystem:
                 return 124, "", "Hook timed out", None
             except BrokenPipeError as exc:
                 await _terminate_proc()
-                return (proc.returncode or 1), "", f"Hook failed: {exc}", None
+                exit_code = proc.returncode if proc.returncode is not None else 1
+                return exit_code, "", f"Hook failed: {exc}", None
             except asyncio.CancelledError:
                 await _terminate_proc()
                 raise

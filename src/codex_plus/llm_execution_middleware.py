@@ -412,10 +412,6 @@ BEGIN EXECUTION NOW:
                         len(retry_schedule) + 1,
                     )
                     await asyncio.sleep(delay)
-            if response is None:
-                if last_exception:
-                    raise last_exception
-                raise RuntimeError("Failed to obtain upstream response")
             content_type = response.headers.get("content-type", "") or ""
             is_event_stream = "text/event-stream" in content_type.lower()
             
