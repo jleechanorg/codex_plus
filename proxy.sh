@@ -35,15 +35,23 @@ PROXY_MODULE="main_sync_cffi"
 RUNTIME_DIR="/tmp/codex_plus"
 PID_FILE="$RUNTIME_DIR/proxy.pid"
 LOG_FILE="$RUNTIME_DIR/proxy.log"
+ERROR_LOG_FILE="$RUNTIME_DIR/proxy.err"
 LOCK_FILE="$RUNTIME_DIR/proxy.lock"
 BASE_URL_FILE="$RUNTIME_DIR/provider.base_url"
+LAUNCHD_STDOUT_LOG="$RUNTIME_DIR/launchd.out"
+LAUNCHD_STDERR_LOG="$RUNTIME_DIR/launchd.err"
+LAUNCHD_ENV_FILE="$RUNTIME_DIR/launchd.env"
 
 if [ -n "${CODEX_PROXY_RUNTIME_DIR:-}" ]; then
     RUNTIME_DIR="$CODEX_PROXY_RUNTIME_DIR"
     PID_FILE="$RUNTIME_DIR/proxy.pid"
     LOG_FILE="$RUNTIME_DIR/proxy.log"
+    ERROR_LOG_FILE="$RUNTIME_DIR/proxy.err"
     LOCK_FILE="$RUNTIME_DIR/proxy.lock"
     BASE_URL_FILE="$RUNTIME_DIR/provider.base_url"
+    LAUNCHD_STDOUT_LOG="$RUNTIME_DIR/launchd.out"
+    LAUNCHD_STDERR_LOG="$RUNTIME_DIR/launchd.err"
+    LAUNCHD_ENV_FILE="$RUNTIME_DIR/launchd.env"
 fi
 # Autostart configuration
 AUTOSTART_LABEL="com.codex.plus.proxy"
@@ -194,6 +202,49 @@ cleanup_stale_resources() {
 
 }
 
+prepare_runtime_paths() {
+    mkdir -p "$RUNTIME_DIR"
+    chmod 755 "$RUNTIME_DIR"
+
+    for log_path in "$LOG_FILE" "$ERROR_LOG_FILE" "$LAUNCHD_STDOUT_LOG" "$LAUNCHD_STDERR_LOG"; do
+        if [ ! -f "$log_path" ]; then
+            touch "$log_path"
+        fi
+        chmod 644 "$log_path" 2>/dev/null || true
+    done
+}
+
+persist_launchd_environment() {
+    local env_file="$LAUNCHD_ENV_FILE"
+    local tmp_file="${env_file}.tmp"
+
+    mkdir -p "$RUNTIME_DIR"
+
+    cat /dev/null > "$tmp_file"
+
+    local provider_value="${CODEX_PLUS_PROVIDER_MODE:-$PROVIDER_MODE}"
+    if [ -n "$provider_value" ]; then
+        printf 'CODEX_PLUS_PROVIDER_MODE=%q\n' "$provider_value" >> "$tmp_file"
+    fi
+
+    if [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
+        printf 'CODEX_PLUS_LOGGING_MODE=true\n' >> "$tmp_file"
+    fi
+
+    for var in OPENAI_API_KEY OPENAI_BASE_URL OPENAI_MODEL CEREBRAS_API_KEY CEREBRAS_BASE_URL CEREBRAS_MODEL; do
+        if [ -n "${!var:-}" ]; then
+            printf '%s=%q\n' "$var" "${!var}" >> "$tmp_file"
+        fi
+    done
+
+    chmod 600 "$tmp_file" 2>/dev/null || true
+    mv "$tmp_file" "$env_file"
+}
+
+clear_launchd_environment() {
+    rm -f "$LAUNCHD_ENV_FILE"
+}
+
 PORT_GUARD_EXIT_CODE=""
 PORT_GUARD_OUTPUT=""
 
@@ -250,6 +301,7 @@ print_status() {
             echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
             echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
             echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
+            echo -e "  ${GREEN}🛠️ Error Log:${NC} $ERROR_LOG_FILE"
             if [ -f "$RUNTIME_DIR/provider.mode" ]; then
                 local provider
                 provider=$(cat "$RUNTIME_DIR/provider.mode" 2>/dev/null)
@@ -282,14 +334,13 @@ print_status() {
 start_proxy() {
     echo -e "${BLUE}🚀 Starting M1 Simple Passthrough Proxy...${NC}"
 
-    # Ensure runtime directory exists first
-    mkdir -p "$RUNTIME_DIR"
-    chmod 755 "$RUNTIME_DIR"
+    prepare_runtime_paths
 
-    # Create a lock file to prevent concurrent starts
+    local os_name
+    os_name=$(uname -s)
+
     local lock_timeout=10
 
-    # Clean up stale lock files first
     if [ -f "$LOCK_FILE" ]; then
         local lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
         if [[ "$lock_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
@@ -298,7 +349,6 @@ start_proxy() {
         fi
     fi
 
-    # Try to acquire lock with timeout
     local lock_acquired=false
     for ((i=0; i<lock_timeout; i++)); do
         if (set -C; echo $$ > "$LOCK_FILE") 2>/dev/null; then
@@ -314,7 +364,7 @@ start_proxy() {
         return 1
     fi
 
-    startup_success=false
+    local startup_success=false
     trap 'if [ "${startup_success:-false}" != true ]; then rm -f "$LOCK_FILE"; fi' EXIT
 
     if [ "${FORCE_RESTART}" = "true" ]; then
@@ -345,10 +395,8 @@ start_proxy() {
         esac
     fi
 
-    # Kill existing proxy processes instead of waiting for locks
     echo -e "${YELLOW}🔄 Checking for existing proxy processes...${NC}"
 
-    # Kill any existing proxy processes on port 10000 - multiple attempts
     for attempt in 1 2 3; do
         local existing_pids=$(lsof -ti :10000 2>/dev/null)
         if [ -z "$existing_pids" ]; then
@@ -357,7 +405,6 @@ start_proxy() {
 
         echo -e "${YELLOW}⚡ Attempt $attempt: Killing proxy processes: $existing_pids${NC}"
 
-        # Try TERM first, then KILL
         if [ "$attempt" -le 2 ]; then
             kill $existing_pids 2>/dev/null
         else
@@ -367,16 +414,13 @@ start_proxy() {
         sleep 2
     done
 
-    # Also kill any uvicorn processes that might be related
     pkill -f "uvicorn.*codex_plus" 2>/dev/null || true
 
-    # Final check - if still running, force kill everything
     if lsof -i :10000 >/dev/null 2>&1; then
         echo -e "${YELLOW}🔨 Force killing all processes on port 10000...${NC}"
         lsof -ti :10000 2>/dev/null | xargs -r kill -9 2>/dev/null
         sleep 3
 
-        # If STILL running, give up
         if lsof -i :10000 >/dev/null 2>&1; then
             echo -e "${RED}❌ Failed to stop existing proxy on port 10000${NC}"
             lsof -i :10000
@@ -386,7 +430,6 @@ start_proxy() {
 
     echo -e "${GREEN}✅ Port 10000 is now available${NC}"
 
-    # Validate environment
     cd "$SCRIPT_DIR" || {
         echo -e "${RED}❌ Failed to change to script directory${NC}"
         return 1
@@ -398,14 +441,76 @@ start_proxy() {
         return 1
     fi
 
-    # Port 10000 should now be available after cleanup above
-
-    # Validate provider configuration before launching
     if ! configure_provider_environment; then
         return 1
     fi
 
-    # Start proxy in background with enhanced error handling
+    if [ "$LOGGING_MODE" = "true" ] || [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
+        export CODEX_PLUS_LOGGING_MODE="true"
+        echo "true" > "$RUNTIME_DIR/logging.mode"
+    else
+        unset CODEX_PLUS_LOGGING_MODE
+        rm -f "$RUNTIME_DIR/logging.mode"
+    fi
+
+    if [ "$os_name" = "Darwin" ]; then
+        persist_launchd_environment
+        ensure_launchd_script
+        install_launchd
+
+        local startup_timeout=10
+        local observed_pid=""
+
+        for ((i=0; i<startup_timeout; i++)); do
+            sleep 1
+            if [ -z "$observed_pid" ] && [ -f "$PID_FILE" ]; then
+                observed_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+            fi
+            if [ -n "$observed_pid" ] && validate_pid "$observed_pid"; then
+                if curl -s -f http://localhost:10000/health >/dev/null 2>&1; then
+                    startup_success=true
+                    break
+                elif [ $i -eq $((startup_timeout-1)) ]; then
+                    echo -e "${YELLOW}⚠️  Process started but health check failed${NC}"
+                fi
+            fi
+            echo -e "${YELLOW}⏳ Waiting for launchd service to be ready ($((i+1))/$startup_timeout)...${NC}"
+        done
+
+        if [ "$startup_success" = true ]; then
+            rm -f "$LOCK_FILE"
+            trap - EXIT
+            echo -e "${GREEN}✅ Proxy started successfully under launchd${NC}"
+            echo -e "${BLUE}🔍 M1 Proxy Status:${NC}"
+            if [ -z "$observed_pid" ] && [ -f "$PID_FILE" ]; then
+                observed_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+            fi
+            if [ -n "$observed_pid" ]; then
+                echo -e "  ${GREEN}✅ Running${NC} (PID: $observed_pid)"
+            else
+                echo -e "  ${GREEN}✅ Running${NC}"
+            fi
+            echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
+            echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
+            echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
+            echo -e "  ${GREEN}🛠️ Error Log:${NC} $ERROR_LOG_FILE"
+            if [ -f "$RUNTIME_DIR/logging.mode" ] || [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
+                echo -e "  ${BLUE}📝 Logging:${NC} ENABLED (passthrough only)"
+            fi
+            echo -e "  ${GREEN}📊 Upstream:${NC} $(get_upstream_url)"
+            return 0
+        else
+            echo -e "${RED}❌ Failed to start proxy via launchd${NC}"
+            echo -e "${YELLOW}📋 Check logs for details:${NC} tail -f $ERROR_LOG_FILE"
+            launchctl stop "$AUTOSTART_LABEL" >/dev/null 2>&1 || true
+            launchctl unload "$LAUNCH_AGENT_PATH" >/dev/null 2>&1 || true
+            rm -f "$PID_FILE"
+            rm -f "$LOCK_FILE"
+            trap - EXIT
+            return 1
+        fi
+    fi
+
     source "$VENV_PATH/bin/activate" || {
         echo -e "${RED}❌ Failed to activate virtual environment${NC}"
         return 1
@@ -413,43 +518,25 @@ start_proxy() {
 
     export PYTHONPATH="$SCRIPT_DIR/src:$PYTHONPATH"
 
-    # Export logging mode flag for middleware to check
-    # Check both --logging flag and CODEX_PLUS_LOGGING_MODE environment variable
-    if [ "$LOGGING_MODE" = "true" ] || [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
-        export CODEX_PLUS_LOGGING_MODE="true"
-        # Persist logging mode state for status display
-        echo "true" > "$RUNTIME_DIR/logging.mode"
-    else
-        # Remove logging mode file if not in logging mode
-        rm -f "$RUNTIME_DIR/logging.mode"
-    fi
-
-    # 🚨🚨🚨 CRITICAL PROXY STARTUP COMMAND - DO NOT MODIFY 🚨🚨🚨
-    # ⚠️ This command starts the curl_cffi proxy with Cloudflare bypass ⚠️
-    # ❌ FORBIDDEN: Changing module, host, port, or import structure
-    # Use nohup to detach the proxy so it survives terminal closure
     nohup python -c "
 import sys, os
 try:
     from codex_plus.$PROXY_MODULE import app
     import uvicorn
-    # 🔒 PROTECTED: Port 10000 required for Codex compatibility
     uvicorn.run(app, host='127.0.0.1', port=10000, log_level='info')
 except Exception as e:
     print(f'STARTUP_ERROR: {e}', file=sys.stderr)
     sys.exit(1)
-" > "$LOG_FILE" 2>&1 &
+" >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" &
 
     local pid=$!
     echo "$pid" > "$PID_FILE"
 
-    # Enhanced startup verification with multiple checks
     local startup_timeout=10
 
     for ((i=0; i<startup_timeout; i++)); do
         sleep 1
         if validate_pid "$pid"; then
-            # Additional check: verify the service is actually responding
             if curl -s -f http://localhost:10000/health >/dev/null 2>&1; then
                 startup_success=true
                 break
@@ -465,14 +552,14 @@ except Exception as e:
 
     if [ "$startup_success" = true ]; then
         trap - EXIT
+        rm -f "$LOCK_FILE"
         echo -e "${GREEN}✅ Proxy started successfully and is responding${NC}"
-        # Show status without cleanup to avoid killing the just-started process
         echo -e "${BLUE}🔍 M1 Proxy Status:${NC}"
         echo -e "  ${GREEN}✅ Running${NC} (PID: $pid)"
         echo -e "  ${GREEN}📡 Proxy URL:${NC} http://localhost:10000"
         echo -e "  ${GREEN}🏥 Health Check:${NC} http://localhost:10000/health"
         echo -e "  ${GREEN}📝 Log:${NC} $LOG_FILE"
-        # Check both environment variable and persisted file for logging mode
+        echo -e "  ${GREEN}🛠️ Error Log:${NC} $ERROR_LOG_FILE"
         if [ -f "$RUNTIME_DIR/logging.mode" ] || [ "${CODEX_PLUS_LOGGING_MODE:-false}" = "true" ]; then
             echo -e "  ${BLUE}📝 Logging:${NC} ENABLED (passthrough only)"
         fi
@@ -480,9 +567,8 @@ except Exception as e:
         return 0
     else
         echo -e "${RED}❌ Failed to start proxy or service is not responding${NC}"
-        echo -e "${YELLOW}📋 Check logs for details:${NC} tail -f $LOG_FILE"
+        echo -e "${YELLOW}📋 Check logs for details:${NC} tail -f $ERROR_LOG_FILE"
 
-        # Clean up failed start
         if validate_pid "$pid"; then
             kill -TERM "$pid" 2>/dev/null
             sleep 2
@@ -562,6 +648,19 @@ stop_proxy() {
     # Clean up lock files and logging mode state
     rm -f "$RUNTIME_DIR/proxy.lock"
     rm -f "$RUNTIME_DIR/logging.mode"
+
+    # Ensure launchd won't immediately restart the proxy
+    if [ "$(uname -s)" = "Darwin" ]; then
+        if [ -f "$LAUNCH_AGENT_PATH" ]; then
+            if launchctl list "$AUTOSTART_LABEL" >/dev/null 2>&1; then
+                echo -e "${YELLOW}🛑 Stopping launchd job ${AUTOSTART_LABEL}${NC}"
+                launchctl stop "$AUTOSTART_LABEL" >/dev/null 2>&1 || true
+            fi
+            echo -e "${YELLOW}🔌 Unloading launchd agent to prevent automatic restarts${NC}"
+            launchctl unload "$LAUNCH_AGENT_PATH" >/dev/null 2>&1 || true
+        fi
+        clear_launchd_environment
+    fi
 }
 
 restart_proxy() {
@@ -572,18 +671,35 @@ restart_proxy() {
 }
 
 ensure_launchd_script() {
-    if [ -x "$LAUNCHD_SCRIPT" ]; then
-        return 0
-    fi
-    echo -e "${YELLOW}⚠️  Launchd helper script missing, creating $LAUNCHD_SCRIPT${NC}"
     mkdir -p "$(dirname "$LAUNCHD_SCRIPT")"
-    cat <<'EOF' > "$LAUNCHD_SCRIPT"
+    cat <<EOF > "$LAUNCHD_SCRIPT"
 #!/bin/bash
-# Launchd-friendly proxy runner that keeps the uvicorn process in the foreground
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENV_PATH="$SCRIPT_DIR/venv"
+SCRIPT_DIR="$SCRIPT_DIR"
+VENV_PATH="$VENV_PATH"
+RUNTIME_DIR="$RUNTIME_DIR"
+PID_FILE="$PID_FILE"
+LOG_FILE="$LOG_FILE"
+ERROR_LOG_FILE="$ERROR_LOG_FILE"
+LAUNCHD_ENV_FILE="$LAUNCHD_ENV_FILE"
+PROXY_MODULE="$PROXY_MODULE"
+
+mkdir -p "$RUNTIME_DIR"
+if [ ! -f "$LOG_FILE" ]; then
+  touch "$LOG_FILE"
+fi
+if [ ! -f "$ERROR_LOG_FILE" ]; then
+  touch "$ERROR_LOG_FILE"
+fi
+chmod 644 "$LOG_FILE" "$ERROR_LOG_FILE" 2>/dev/null || true
+
+unset CODEX_PLUS_LOGGING_MODE
+if [ -f "$LAUNCHD_ENV_FILE" ]; then
+  set -a
+  source "$LAUNCHD_ENV_FILE"
+  set +a
+fi
 
 if [ ! -d "$VENV_PATH" ]; then
   echo "Virtualenv missing at $VENV_PATH" >&2
@@ -599,17 +715,27 @@ else
   export PYTHONPATH="$EXTRA_PYTHONPATH"
 fi
 
+echo $$ > "$PID_FILE"
+
 exec python -c "
-import sys
-from codex_plus.main_sync_cffi import app
-import uvicorn
-uvicorn.run(app, host='127.0.0.1', port=10000, log_level='info')
-"
+import sys, os
+try:
+    from codex_plus.$PROXY_MODULE import app
+    import uvicorn
+    uvicorn.run(app, host='127.0.0.1', port=10000, log_level='info')
+except Exception as e:
+    print(f'STARTUP_ERROR: {e}', file=sys.stderr)
+    sys.exit(1)
+" >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE"
 EOF
     chmod +x "$LAUNCHD_SCRIPT"
 }
 
 install_launchd() {
+    if [ ! -f "$LAUNCHD_ENV_FILE" ]; then
+        persist_launchd_environment
+    fi
+    prepare_runtime_paths
     ensure_launchd_script
     mkdir -p "$(dirname "$LAUNCH_AGENT_PATH")"
     cat <<EOF > "$LAUNCH_AGENT_PATH"
@@ -628,9 +754,9 @@ install_launchd() {
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/codex_plus/launchd.out</string>
+    <string>$LAUNCHD_STDOUT_LOG</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/codex_plus/launchd.err</string>
+    <string>$LAUNCHD_STDERR_LOG</string>
     <key>EnvironmentVariables</key>
     <dict>
       <key>PATH</key>
@@ -653,6 +779,7 @@ remove_launchd() {
     else
         echo -e "${YELLOW}ℹ️  No LaunchAgent plist found${NC}"
     fi
+    clear_launchd_environment
 }
 
 status_launchd() {
@@ -741,9 +868,11 @@ show_help() {
     echo "Commands:"
     echo -e "  ${GREEN}enable${NC}   Start the proxy server"
     echo -e "  ${GREEN}disable${NC}  Stop the proxy server"
+    echo -e "  ${GREEN}start${NC}    Alias for enable"
+    echo -e "  ${GREEN}stop${NC}     Alias for disable"
     echo -e "  ${GREEN}status${NC}   Show proxy status"
     echo -e "  ${GREEN}restart${NC}  Restart the proxy server"
-    echo -e "  ${GREEN}autostart${NC} [enable|disable|status]"
+    echo -e "  ${GREEN}autostart${NC} [enable|disable|status|ensure]"
     echo -e "             Manage automatic startup (default: enable)"
     echo -e "  ${GREEN}help${NC}     Show this help message"
     echo ""
