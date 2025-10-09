@@ -21,7 +21,10 @@ from fastapi.responses import JSONResponse
 
 from src.codex_plus.hooks import HookSystem
 from src.codex_plus.status_line_middleware import HookMiddleware
-from src.codex_plus.llm_execution_middleware import LLMExecutionMiddleware
+from src.codex_plus.llm_execution_middleware import (
+    LLMExecutionMiddleware,
+    STATUS_LINE_INSTRUCTION_PREFIX,
+)
 
 
 class TestSettingsFilePrecedence:
@@ -236,10 +239,15 @@ class TestStatusLineInjection:
         modified_body = llm_middleware.inject_execution_behavior(request_body)
 
         # Assert
-        # Should contain status line instruction
+        # Should contain status line instruction appended to the end
         input_text = modified_body["input"][0]["content"][0]["text"]
-        assert "Display this status line first:" in input_text
-        assert "test_repo" in input_text
+        expected_instruction = (
+            f"{STATUS_LINE_INSTRUCTION_PREFIX} "
+            f"{mock_request_with_working_dir.state.status_line}"
+        )
+        assert expected_instruction in input_text
+        assert input_text.strip().endswith(expected_instruction)
+        assert input_text.startswith("test command")
 
     def test_status_line_injection_into_standard_format(self, llm_middleware, mock_request_with_working_dir):
         """FAILING: Should inject status line into standard messages format"""
@@ -266,8 +274,13 @@ class TestStatusLineInjection:
                 break
 
         assert user_message is not None
-        assert "Display this status line first:" in user_message["content"]
-        assert "test_repo" in user_message["content"]
+        expected_instruction = (
+            f"{STATUS_LINE_INSTRUCTION_PREFIX} "
+            f"{mock_request_with_working_dir.state.status_line}"
+        )
+        assert expected_instruction in user_message["content"]
+        assert user_message["content"].strip().endswith(expected_instruction)
+        assert user_message["content"].startswith("test message")
 
 
 class TestGitHeaderScriptResolution:
