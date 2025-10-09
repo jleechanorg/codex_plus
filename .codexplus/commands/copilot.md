@@ -1,368 +1,173 @@
 ---
-description: "Fast autonomous PR processing with comment coverage tracking"
-argument-hint: "[PR number (optional, defaults to current)]"
+name: copilot
+description: "Self-contained Codex workflow for processing PR feedback and drafting responses"
+argument-hint: "<comment-export.json | PR number | optional notes>"
 ---
 
-# /copilot - Autonomous PR Processing for Codex CLI
+# /copilot — Expanded Review Workflow (Codex Edition)
 
-Execute the full /copilot workflow adapted for Codex CLI. This command processes PR comments, implements fixes, and ensures 100% comment coverage with timing tracking.
+Use this command when a pull request already exists and Codex needs to process reviewer feedback end-to-end. It mirrors the Claude `/copilot-expanded` flow but stays compatible with the tooling available in this repository.
 
-Optional behaviors inspired by /copilot:
-- Set `COPILOT_RECENT_LIMIT` (e.g. 30) to only process the most recent N original comments
-- Set `COPILOT_ALLOW_AUTOMERGE=1` to auto-merge when coverage is 100% and PR is mergeable
+## Phase 0 – Preconditions
+- Ensure `git status -sb` shows only changes relevant to the PR.
+- Confirm the current branch matches the PR branch (`git branch --show-current`).
+- If the argument is a PR number, verify `gh` is authenticated; otherwise prepare a local comment export or manual notes.
 
-## 🚀 Phase 1: Initial Setup
+## Phase 1 – Workspace Setup
+1. Capture a start timestamp: `START_TIME=$(date +%s)`.
+2. Create a namespaced scratch root under `/tmp` so artifacts stay grouped by repo and branch:
+   ```bash
+   REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
+   CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   SCRATCH_ROOT="/tmp/${REPO_NAME}__${CURRENT_BRANCH}"
+   mkdir -p "$SCRATCH_ROOT"
+   WORK_DIR=$(mktemp -d "$SCRATCH_ROOT/copilot.XXXXXX")
+   ```
+3. Define paths inside `WORK_DIR` for raw comments, triage tables, draft replies, and logs. Example:
+   ```bash
+   COMMENTS_JSON="$WORK_DIR/comments.json"
+   TRIAGE_MD="$WORK_DIR/triage.md"
+   REPLIES_MD="$WORK_DIR/replies.md"
+   RESPONSES_JSON="$WORK_DIR/responses.json"
+   OPERATIONS_LOG="$WORK_DIR/operations.log"
+   ```
+4. Document `SCRATCH_ROOT` and these artifact paths in the session output so the user can inspect them later.
+5. Register a cleanup plan (`trap 'rm -rf "$WORK_DIR"' EXIT`) or explicitly remind the user to remove the directory (and the parent `SCRATCH_ROOT` when empty).
 
-Get PR context and start timing:
-```bash
-# Get PR number from arguments or current context
-pr_num="${ARGUMENTS:-$(gh pr view --json number -q .number 2>/dev/null || echo "2")}"
-echo "🎯 Processing PR #$pr_num"
+## Phase 2 – Collect Review Feedback
+- **GitHub CLI available:**
+  ```bash
+  if [ -n "${ARGUMENTS:-}" ]; then
+    read -r PR_NUMBER _ <<<"$ARGUMENTS"
+  fi
+  if [ -z "${PR_NUMBER:-}" ]; then
+    PR_NUMBER=$(gh pr view --json number --jq '.number')
+  fi
+  gh pr view "$PR_NUMBER" --json comments,reviews > "$COMMENTS_JSON"
+  # Need inline review threads? Capture them separately and merge:
+  # gh api graphql -f query='query($pr:Int!){repository(owner:"<owner>",name:"<repo>"){pullRequest(number:$pr){reviewThreads{nodes{comments{body,path,startLine,line}}}}}}' -f pr="$PR_NUMBER" > "$WORK_DIR/review_threads.json"
+  # Combine thread data into "$COMMENTS_JSON" with jq before continuing.
+  ```
+- **Comment export provided:** copy the file into `COMMENTS_JSON` and record the provenance (local export, pasted notes, etc.).
+- **Manual input:** ask the user to supply comments via scratch file; store them in `COMMENTS_JSON` using `cat <<'EOF'`.
+- Validate JSON with `jq empty "$COMMENTS_JSON"`; abort gracefully if parsing fails.
 
-# Record start time
-start_time=$(date +%s)
+## Phase 3 – Analyze & Prioritize
+1. Derive actionable entries with `jq` and write them to `TRIAGE_MD` as a markdown bullet list, one per comment, e.g. `- [blocking] path/to/file.py:120 (alice) – ensure auth middleware handles 401`. Include the `comment_id` and linkable context where helpful.
+2. Sort the list by severity using a cautious heuristic:
+   - Mentions of "security", "failing", "bug", or similar high-risk keywords ⇒ **blocking**
+   - Questions about security, correctness, or stability (e.g., "Is this safe?", "Could this leak data?", "Does this handle errors?") ⇒ **blocking**
+   - Other questions (e.g., "Why did you choose this approach?", "Can this be simplified?") ⇒ **follow-up**
+   - Style or minor wording items ⇒ **nit**
+   - When ambiguous, err on the side of caution and categorize as **blocking** if it could impact functionality or safety. Example: "Should we validate user input here?" ⇒ **blocking**
+3. Count totals (overall, actionable, already replied) and log them to `OPERATIONS_LOG` with timestamps.
+4. Produce a work plan grouping comments by file or subsystem. Highlight dependencies (e.g., “update fixture before fixing tests”).
 
-# Get repository context
-owner=$(gh repo view --json owner -q .owner.login)
-repo=$(gh repo view --json name -q .name)
+## Phase 4 – Implement Fixes
+- Tackle items in priority order: blocking → follow-up → nit, noting that blocking items include security and correctness concerns.
+- For each batch of related comments:
+  1. Apply edits using Edit/MultiEdit.
+  2. Record affected files and commands in `OPERATIONS_LOG`.
+  3. Display focused diffs (`git diff -- <file>` or `git diff --stat`) so the user can verify progress.
+- Use temporary branches or stashes if risky experiments are required; always return to the main PR branch before continuing.
 
-# Defaults and helpers
-# Default to process most recent 30 originals unless overridden
-COPILOT_RECENT_LIMIT=${COPILOT_RECENT_LIMIT:-30}
+## Phase 5 – Validation Gates
+1. Run targeted checks referenced by reviewers; fall back to `pytest -k ...` or `./run_tests.sh` if uncertain.
+2. Capture outputs verbatim in the session, noting pass/fail status.
+3. If tests fail, loop back to Phase 4 with a concise bug report and log the failure in `OPERATIONS_LOG`.
+4. Optionally check mergeability with `gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable'` when `gh` is available.
+5. Re-run quick lint/type checks when they relate to the feedback (e.g., formatting feedback).
 
-# GitHub API with simple retry/backoff
-gh_api() {
-  local endpoint="$1"; shift || true
-  local max_retries=3
-  local attempt=0
-  local delay=1
-  local out
-  while :; do
-    if out=$(gh api "$endpoint" "$@" 2>/dev/null); then
-      echo "$out"
-      return 0
+## Phase 6 – Draft Responses & Evidence
+1. For each actionable comment, capture the REST `comment_id` (e.g., `gh api ... --jq '.id'`) and draft a numbered reply block in `REPLIES_MD`:
+   ```markdown
+   1. [AI responder] Thanks for flagging the auth bypass—added an explicit check.
+      - Status: resolved
+      - Action Taken: Updated middleware guard and added regression test.
+      - Evidence: pytest -k auth_guard (pass)
+   ```
+   Keep `[AI responder]` at the start of the numbered line to satisfy auto-posting requirements.
+2. Reference files as `path/to/file.py:123` inside the reply body to aid reviewers.
+3. Compute response coverage with a safe default that matches the documented formats:
+   ```bash
+   RESPONDED=$(grep -c '^[0-9]\+\. \[AI responder\]' "$REPLIES_MD" 2>/dev/null || echo 0)
+   ACTIONABLE=$(grep -c '^- \[[^]]\+\]' "$TRIAGE_MD" 2>/dev/null || echo 0)
+   if [ "$ACTIONABLE" -gt 0 ]; then
+     COVERAGE=$(( RESPONDED * 100 / ACTIONABLE ))
+   else
+     COVERAGE=100
+   fi
+   ```
+4. Materialise API-ready responses for auto-posting (use numeric `comment_id` values from `gh api`):
+   ```bash
+   cat <<'EOF' > "$RESPONSES_JSON"
+   {
+     "responses": [
+       {
+         "comment_id": 1234567890,
+         "reply_text": "[AI responder] DONE – replace with your actual reply text"
+       }
+     ]
+   }
+   EOF
+   ```
+   Add or edit entries per comment before posting.
+5. Optionally auto-post replies when Codex-compatible tooling is available:
+  - **Repo script available:**
+    ```bash
+    REPLY_SCRIPT=${REPLY_SCRIPT:-scripts/commentreply.py}
+    if [ -f "$REPLY_SCRIPT" ]; then
+      OWNER=$(gh repo view --json owner --jq '.owner.login')
+      REPO=$(gh repo view --json name --jq '.name')
+      PR_NUMBER=${PR_NUMBER:-$(gh pr view --json number --jq '.number')}
+      python "$REPLY_SCRIPT" --owner "$OWNER" --repo "$REPO" --pr "$PR_NUMBER" --input "$RESPONSES_JSON"
     fi
-    attempt=$((attempt+1))
-    if [ $attempt -ge $max_retries ]; then
-      # final attempt with stderr visible
-      gh api "$endpoint" "$@"
-      return $?
-    fi
-    sleep $delay
-    delay=$((delay*2))
-  done
-}
+    ```
+   - **No automation:** fall back to manual posting via `gh api` (document the limitation in `OPERATIONS_LOG` and in the final summary).
+   Review any tool output for success indicators and capture URLs in `OPERATIONS_LOG`.
+6. Flag any comments that need escalation or reviewer clarification.
 
-# Show current PR status (compatible fields)
-gh pr view $pr_num --json number,title,state,mergeable,reviews -q '
-  "📋 PR #\(.number): \(.title)"
-  + "\n📊 State: \(.state) | Mergeable: \(.mergeable)"
-  + "\n👥 Reviews: \(.reviews | length) total"'
+## Phase 7 – Wrap Up & Handoff
+- Summarize key metrics: execution duration (`$(date +%s) - START_TIME`), files touched, tests run, response coverage.
+- Provide next steps for the user (e.g., `git commit`, push, paste replies in GitHub UI).
+- Remind the user to inspect and then remove `WORK_DIR` (and clean up `/tmp/${REPO_NAME}__${CURRENT_BRANCH}` if empty) unless they wish to archive it.
+
+## Expected Output Skeleton
+```text
+Source: <gh api | local export | manual>
+
+Comment Summary (stored in $WORK_DIR/triage.md within /tmp/${REPO_NAME}__${CURRENT_BRANCH})
+- [blocking] path/to/file.py:120 (alice) – ensure auth middleware handles 401...
+- [follow-up] docs/update.md:45 (reviewer) – clarify CLI flag behavior
+
+Actions
+- ✅ Added language hint to Expected Output Skeleton (.codexplus/commands/copilot.md:92)
+- ✅ Posted replies via repository reply script (see OPERATIONS_LOG URLs)
+- ✅ pytest -q (pass)
+
+Draft Replies (see $WORK_DIR/replies.md within /tmp/${REPO_NAME}__${CURRENT_BRANCH})
+1. [AI responder] Thanks for flagging the auth bypass—added an explicit check.
+   - Status: resolved
+   - Action Taken: Updated middleware guard and added regression test.
+   - Evidence: pytest -k auth_guard (pass)
+2. [AI responder] Confirmed CLI flag behavior remains unchanged.
+   - Status: resolved
+   - Action Taken: Clarified docs and added assertion.
+   - Evidence: pytest -k cli_flags (pass)
+
+Metrics
+- Duration: 18m
+- Files touched: 4
+- Tests: pytest -q (pass)
+- Coverage: 5/6 actionable (83%)
+- Auto-post: repository reply script ✅
+
+Next Steps
+- sanity-check posted replies on GitHub
+- git commit -am "fix: harden auth middleware" (pending)
 ```
 
-## 🔍 Phase 2: Fetch and Analyze Comments
-
-Fetch all PR comments for analysis:
-```bash
-echo -e "\n📥 Fetching PR comments..."
-
-# Get review comments (line-specific)
-review_comments=$(gh_api "repos/$owner/$repo/pulls/$pr_num/comments" --paginate | jq -s 'add // []')
-review_count=$(echo "$review_comments" | jq 'length')
-
-# Get issue comments (general)
-issue_comments=$(gh_api "repos/$owner/$repo/issues/$pr_num/comments" --paginate | jq -s 'add // []')
-issue_count=$(echo "$issue_comments" | jq 'length')
-
-echo "📊 Found $review_count review comments and $issue_count issue comments"
-
-# Identify original comments needing replies
-original_comments=$(echo "$review_comments" | jq '[.[] | select(.in_reply_to_id == null)]')
-## Optional: limit to most recent N originals (set to 0 or "all" to disable)
-if [ -n "${COPILOT_RECENT_LIMIT:-}" ] && [ "$COPILOT_RECENT_LIMIT" != "0" ] && [ "$COPILOT_RECENT_LIMIT" != "all" ]; then
-  if echo "$COPILOT_RECENT_LIMIT" | grep -Eq '^[0-9]+$'; then
-    original_comments=$(echo "$original_comments" | jq "sort_by(.created_at) | reverse | .[:$COPILOT_RECENT_LIMIT]")
-  fi
-fi
-original_count=$(echo "$original_comments" | jq 'length')
-
-echo "💬 $original_count original comments need responses"
-```
-
-## 🛠️ Phase 3: Analyze and Categorize Issues
-
-Process comments to identify actionable issues:
-```bash
-echo -e "\n🔍 Analyzing comments for actionable issues..."
-
-# Extract actionable issues from comments
-actionable_issues=""
-security_issues=""
-bug_issues=""
-style_issues=""
-had_actionable=0
-
-# Process each original comment
-for i in $(seq 0 $((original_count - 1))); do
-  comment=$(echo "$original_comments" | jq -r ".[$i]")
-  body=$(echo "$comment" | jq -r '.body')
-  path=$(echo "$comment" | jq -r '.path // "general"')
-  line=$(echo "$comment" | jq -r '.line // 0')
-  
-  # Categorize by content patterns
-  if echo "$body" | grep -iE "security|vulnerability|injection|unsafe" > /dev/null; then
-    security_issues="$security_issues\n🔴 SECURITY [$path:$line]: ${body:0:100}..."
-    had_actionable=1
-  elif echo "$body" | grep -iE "bug|error|fail|crash|undefined|null" > /dev/null; then
-    bug_issues="$bug_issues\n🟡 BUG [$path:$line]: ${body:0:100}..."
-    had_actionable=1
-  elif echo "$body" | grep -iE "style|format|naming|convention" > /dev/null; then
-    style_issues="$style_issues\n🔵 STYLE [$path:$line]: ${body:0:100}..."
-  fi
-done
-
-# Display categorized issues
-[ -n "$security_issues" ] && echo -e "\n🔴 Security Issues:$security_issues"
-[ -n "$bug_issues" ] && echo -e "\n🟡 Bug Issues:$bug_issues"
-[ -n "$style_issues" ] && echo -e "\n🔵 Style Issues:$style_issues"
-```
-
-## 🔧 Phase 4: Implement Fixes
-
-Now you should implement fixes for all identified issues:
-```bash
-echo -e "\n🔧 Implementing fixes for identified issues..."
-
-# This is where Codex CLI's AI should:
-# 1. Read the files mentioned in comments
-# 2. Apply fixes for security issues (highest priority)
-# 3. Fix bugs and runtime errors
-# 4. Address style and formatting issues
-# 5. Use Edit/MultiEdit tools for actual code changes
-
-echo "💡 AI: Please implement the following fixes now:"
-echo "1. Security fixes for any vulnerabilities mentioned"
-echo "2. Bug fixes for reported errors"
-echo "3. Style improvements as requested"
-echo ""
-echo "Use Edit/MultiEdit tools to make actual code changes."
-echo "Show git diff after changes to verify implementation."
-```
-
-## 💬 Phase 5: Generate and Post Responses
-
-All posted replies are prefixed with the required "[AI Responder codex]" tag for easy identification and auditing.
-
-Post responses to all comments:
-```bash
-echo -e "\n💬 Posting responses to comments..."
-echo "⚙️ Orchestration: coordinating fixpr and analysis phases (stubs)"
-
-# Post responses to each original comment
-for i in $(seq 0 $((original_count - 1))); do
-  comment=$(echo "$original_comments" | jq -r ".[$i]")
-  comment_id=$(echo "$comment" | jq -r '.id')
-  body=$(echo "$comment" | jq -r '.body')
-  path=$(echo "$comment" | jq -r '.path // "general"')
-  
-  tag="[AI Responder codex]"
-  
-  # Generate contextual response
-  if echo "$body" | grep -iE "security|vulnerability" > /dev/null; then
-    response="$tag ✅ Fixed: Security issue addressed with input validation and sanitization. See commit for implementation details."
-  elif echo "$body" | grep -iE "bug|error|fail" > /dev/null; then
-    response="$tag ✅ Fixed: Bug resolved with proper error handling. Verified fix with testing."
-  elif echo "$body" | grep -iE "style|format" > /dev/null; then
-    response="$tag ✅ Fixed: Style improvements applied as suggested."
-  else
-    response="$tag ✅ Acknowledged and addressed. Thank you for the feedback!"
-  fi
-  
-  # Post threaded reply
-  echo "↳ Replying to comment #$comment_id"
-  gh api "repos/$owner/$repo/pulls/$pr_num/comments/$comment_id/replies" \
-    -X POST \
-    -f body="$response
-
-🤖 *Automated response via Codex Plus /copilot*" 2>/dev/null || \
-  gh api "repos/$owner/$repo/issues/$pr_num/comments" \
-    -X POST \
-    -f body="Re: Comment #$comment_id
-
-$response
-
-🤖 *Automated response via Codex Plus /copilot*"
-done
-
-echo "✅ Posted responses to $original_count comments"
-```
-
-## ✅ Phase 6: Verify Coverage
-
-Check comment coverage and implementation:
-```bash
-echo -e "\n📊 Verifying comment coverage..."
-
-# Re-fetch to check coverage
-updated_comments=$(gh_api "repos/$owner/$repo/pulls/$pr_num/comments" --paginate | jq -s 'add // []')
-replies=$(echo "$updated_comments" | jq '[.[] | select(.in_reply_to_id != null)]')
-reply_count=$(echo "$replies" | jq 'length')
-
-# Calculate coverage string for reporting/posting
-coverage_str="N/A"
-if [ "$original_count" -gt 0 ]; then
-  coverage=$((reply_count * 100 / original_count))
-  coverage_str="${coverage}% ($reply_count/$original_count)"
-  
-  if [ "$coverage" -lt 100 ]; then
-    missing=$((original_count - reply_count))
-    echo "🚨 WARNING: INCOMPLETE COVERAGE!"
-    echo "❌ Missing replies: $missing comments"
-    echo "📊 Coverage: ${coverage}% ($reply_count/$original_count)"
-    echo "🔧 ACTION REQUIRED: Address remaining comments"
-    # Strict gating: fail run if coverage is incomplete
-    exit 1
-  else
-    echo "✅ COVERAGE: 100% - All comments addressed!"
-  fi
-else
-  echo "ℹ️ No comments requiring responses"
-fi
-
-# Check for actual code changes
-echo -e "\n📝 Verifying implementation..."
-changes=$(git diff --stat 2>/dev/null)
-if [ -n "$changes" ]; then
-  echo "✅ Code changes detected:"
-  echo "$changes"
-else
-  echo "⚠️ WARNING: No code changes detected"
-  echo "❌ GitHub reviews without implementation = FAILURE"
-  # Enforce anti-pattern: actionable issues detected but no code changes
-  if [ "$had_actionable" -eq 1 ]; then
-    echo "🚫 FATAL: Actionable issues detected but no code changes were made."
-    exit 1
-  fi
-fi
- 
-# Persist key metrics for later phases
-BRANCH_NAME=$(git branch --show-current)
-mkdir -p "/tmp/$BRANCH_NAME"
-{
-  echo "ORIGINAL_COUNT=$original_count"
-  echo "REPLY_COUNT=$reply_count"
-  echo "COVERAGE_STR=$coverage_str"
-} > "/tmp/$BRANCH_NAME/copilot_state.env"
-```
-
-## 📤 Phase 7: Commit and Push
-
-Commit all changes:
-```bash
-echo -e "\n📤 Committing and pushing changes..."
-
-# Only commit if there are changes
-if [ -n "$(git diff --stat 2>/dev/null)" ]; then
-  git add -A
-
-  BRANCH_NAME=$(git branch --show-current)
-  mkdir -p "/tmp/$BRANCH_NAME"
-  commit_msg="/tmp/$BRANCH_NAME/commit_message.txt"
-  {
-    echo "fix: address PR #$pr_num review comments"
-    echo
-    echo "- Implemented security fixes"
-    echo "- Resolved reported bugs"
-    echo "- Applied style improvements"
-    echo "- Added test coverage"
-    echo
-    echo "Automated by /copilot"
-    echo
-    echo "FILE JUSTIFICATION PROTOCOL"
-    echo "==========================="
-    for f in $(git diff --name-only); do
-      echo "- File: $f"
-      echo "  Goal: Address reviewer feedback and improve quality"
-      echo "  Modification: Changes applied in context of PR comments"
-      echo "  Necessity: Required to resolve identified issues (security/bug/style)"
-      echo "  Integration Proof: Verified via coverage checks and git diff"
-    done
-  } > "$commit_msg"
-
-  git commit -F "$commit_msg"
-  
-  git push origin HEAD
-  echo "✅ Changes pushed to remote"
-else
-  echo "ℹ️ No changes to commit"
-fi
-```
-
-## ⏱️ Phase 8: Performance Report
-
-Calculate and report execution time:
-```bash
-echo -e "\n📊 Final Report"
-echo "==============="
-
-# Calculate execution time
-end_time=$(date +%s)
-duration=$((end_time - start_time))
-minutes=$((duration / 60))
-seconds=$((duration % 60))
-
-# Only warn if over 3 minutes
-if [ $duration -gt 180 ]; then
-  echo "⚠️ PERFORMANCE: ${minutes}m ${seconds}s (exceeded 3m target)"
-else
-  echo "✅ Completed in ${minutes}m ${seconds}s"
-fi
-
-# Final status
-echo ""
-gh pr view $pr_num --json state,mergeable,reviews -q '
-  "📋 PR Status: \(.state)"
-  + "\n🔀 Mergeable: \(.mergeable)"
-  + "\n👥 Reviews: \(.reviews | length) total"'
-
-echo -e "\n✅ /copilot execution complete!"
-echo "🎯 Next steps: Review changes and merge when ready"
-
-# Also post a summary as an issue comment for auditability
-echo -e "\n📝 Posting coverage summary as issue comment..."
-tag=${tag:-"[AI Responder codex]"}
-if [ -f "/tmp/$BRANCH_NAME/copilot_state.env" ]; then
-  # shellcheck disable=SC1090
-  . "/tmp/$BRANCH_NAME/copilot_state.env"
-fi
-summary_body="$tag PR Comment Coverage Summary\n\n- Review comments: $review_count\n- Issue comments: $issue_count\n- Original comments: ${ORIGINAL_COUNT:-$original_count}\n- Replies posted: ${REPLY_COUNT:-$reply_count}\n- Coverage: ${COVERAGE_STR:-$coverage_str}\n- Duration: ${minutes}m ${seconds}s\n\n🤖 Automated by Codex Plus /copilot"
-gh api "repos/$owner/$repo/issues/$pr_num/comments" \
-  -X POST \
-  -f body="$summary_body" \
-  && echo "✅ Summary comment posted" \
-  || echo "⚠️ Failed to post summary comment"
-
-# Optional: Auto-merge if allowed and coverage is 100% and PR is mergeable
-if [ "${COPILOT_ALLOW_AUTOMERGE:-0}" = "1" ]; then
-  mergeable_state=$(gh pr view $pr_num --json mergeable --jq .mergeable)
-  if [ "$mergeable_state" = "MERGEABLE" ] && [ "$coverage_str" != "N/A" ] && echo "$coverage_str" | grep -q "100%"; then
-    echo "🔀 Auto-merge enabled and conditions met. Attempting merge..."
-    gh pr merge $pr_num --squash --delete-branch -y && echo "✅ PR merged (squash)" || echo "⚠️ Auto-merge attempt failed"
-  else
-    echo "ℹ️ Auto-merge skipped: not mergeable or coverage < 100%"
-  fi
-fi
-```
-
-## 💡 Summary
-
-This command has:
-1. ✅ Fetched and analyzed all PR comments
-2. ✅ Categorized issues by priority (security → bugs → style)
-3. ✅ Implemented fixes using AI code editing
-4. ✅ Posted responses to achieve 100% coverage
-5. ✅ Verified both communication and implementation coverage
-6. ✅ Committed and pushed changes
-7. ✅ Tracked execution time with performance warnings
-
-The PR should now be ready for final review and merge!
+## Safety Rails
+- Abort if comment collection fails; request new input before proceeding.
+- Clean up temporary directories and redact sensitive data from logs before finishing.
+- If automation (e.g., `gh`) is unavailable, fall back to manual steps and document the limitation in the summary.
