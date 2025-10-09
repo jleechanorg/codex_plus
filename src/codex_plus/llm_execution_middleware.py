@@ -44,6 +44,9 @@ from .chat_colorizer import apply_claude_colors
 
 logger = logging.getLogger(__name__)
 
+
+STATUS_LINE_INSTRUCTION_PREFIX = "Append this status line at the end of your response:"
+
 class LLMExecutionMiddleware:
     """Middleware that instructs LLM to execute slash commands like Claude Code CLI"""
 
@@ -233,7 +236,7 @@ BEGIN EXECUTION NOW:
         # Add status line if available
         if status_line:
             # Simple, direct instruction that Claude is more likely to follow
-            injection_parts.append(f"Display this status line first: {status_line}")
+            injection_parts.append(f"{STATUS_LINE_INSTRUCTION_PREFIX} {status_line}")
             logger.info(f"📌 Will inject status line: {status_line}")
 
         # Add execution instructions if needed
@@ -249,7 +252,7 @@ BEGIN EXECUTION NOW:
             execution_instructions = []
 
             for part in injection_parts:
-                if part.startswith("Display this status line first:"):
+                if part.startswith(STATUS_LINE_INSTRUCTION_PREFIX):
                     status_line_instruction = part
                 else:
                     execution_instructions.append(part)
@@ -269,7 +272,7 @@ BEGIN EXECUTION NOW:
                     for message in request_body["messages"]:
                         if message.get("role") == "user":
                             current_content = message.get("content", "")
-                            message["content"] = f"{status_line_instruction}\n\n{current_content}"
+                            message["content"] = f"{current_content}\n\n{status_line_instruction}" if current_content else status_line_instruction
                             break
 
                 logger.info("💉 Injected status line and/or execution instruction as system message")
@@ -285,7 +288,10 @@ BEGIN EXECUTION NOW:
 
                                 # Add status line instruction directly as visible text
                                 if status_line_instruction:
-                                    current_text = f"{status_line_instruction}\n\n{current_text}"
+                                    if current_text:
+                                        current_text = f"{current_text}\n\n{status_line_instruction}"
+                                    else:
+                                        current_text = status_line_instruction
 
                                 # Add execution instructions as system instruction
                                 if execution_instructions:
