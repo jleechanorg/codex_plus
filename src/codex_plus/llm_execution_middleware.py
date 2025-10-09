@@ -36,7 +36,7 @@ import logging
 import os
 import asyncio
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Final
 import re
 from fastapi.responses import JSONResponse
 
@@ -45,7 +45,7 @@ from .chat_colorizer import apply_claude_colors
 logger = logging.getLogger(__name__)
 
 
-STATUS_LINE_INSTRUCTION_PREFIX = "Append this status line at the end of your response:"
+STATUS_LINE_INSTRUCTION_PREFIX: Final[str] = "Append this status line at the end of your response:"
 
 class LLMExecutionMiddleware:
     """Middleware that instructs LLM to execute slash commands like Claude Code CLI"""
@@ -272,7 +272,10 @@ BEGIN EXECUTION NOW:
                     for message in request_body["messages"]:
                         if message.get("role") == "user":
                             current_content = message.get("content", "")
-                            message["content"] = f"{current_content}\n\n{status_line_instruction}" if current_content else status_line_instruction
+                            if current_content:
+                                message["content"] = f"{current_content}\n\n{status_line_instruction}"
+                            else:
+                                message["content"] = status_line_instruction
                             break
 
                 logger.info("💉 Injected status line and/or execution instruction as system message")
