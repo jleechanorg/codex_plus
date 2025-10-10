@@ -22,6 +22,7 @@ class HookMiddleware:
         self._cached_status_line = None
         self._cache_task = None
         self._cache_lock = asyncio.Lock()
+        self._task_lock = asyncio.Lock()
 
     async def get_status_line(self, working_directory: Optional[str] = None) -> Optional[str]:
         """Get status line content without printing it"""
@@ -48,32 +49,65 @@ class HookMiddleware:
 
     async def start_background_status_update(self):
         """Start background task to update status line cache"""
-        if self._cache_task is None or self._cache_task.done():
-            # Cancel existing task if it exists and is still running
+        async with self._task_lock:
             if self._cache_task and not self._cache_task.done():
-                self._cache_task.cancel()
-                try:
-                    await self._cache_task
-                except asyncio.CancelledError:
-                    pass
+                return
+
+            if self._cache_task and self._cache_task.done():
+                self._cache_task = None
 
             self._cache_task = asyncio.create_task(self._background_update_loop())
-            logger.info("🔄 Started background status line update task")
+            self._cache_task.add_done_callback(self._on_cache_task_done)
+
+        logger.info("🔄 Started background status line update task")
+
+    async def stop_background_status_update(self):
+        """Stop background status updates and wait for clean shutdown."""
+        async with self._task_lock:
+            task = self._cache_task
+            if not task:
+                return
+            self._cache_task = None
+
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    def _on_cache_task_done(self, task: asyncio.Task) -> None:
+        """Ensure task reference is cleared when the background updater stops."""
+        if task.cancelled():
+            logger.debug("Background status line update task cancelled")
+        elif task.exception():
+            logger.debug("Background status line update task failed: %s", task.exception())
+
+        if self._cache_task is task:
+            self._cache_task = None
 
     async def _background_update_loop(self):
         """Background loop to update status line cache every 30 seconds"""
         update_count = 0
-        while True:
-            try:
-                await self._update_status_cache()
-                update_count += 1
-                # Only log every 10 updates to reduce spam
-                if update_count % 10 == 0:
-                    logger.info(f"📊 Background status line: {update_count} updates completed")
-                await asyncio.sleep(30)  # Update every 30 seconds (less frequent)
-            except Exception as e:
-                logger.debug(f"Background status update failed: {e}")
-                await asyncio.sleep(10)  # Retry after 10 seconds on error
+        try:
+            while True:
+                try:
+                    await self._update_status_cache()
+                    update_count += 1
+                    # Only log every 10 updates to reduce spam
+                    if update_count % 10 == 0:
+                        logger.info(f"📊 Background status line: {update_count} updates completed")
+                    await asyncio.sleep(30)  # Update every 30 seconds (less frequent)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.debug(f"Background status update failed: {e}")
+                    await asyncio.sleep(10)  # Retry after 10 seconds on error
+        except asyncio.CancelledError:
+            logger.debug("Background status line update loop cancelled")
+            raise
+        finally:
+            logger.debug("Background status line update loop stopped")
 
     async def _update_status_cache(self):
         """Update the cached status line"""

@@ -20,3 +20,6 @@ Adopt conventional-style prefixes: `fix(middleware): ...`, `refactor(hooks): ...
 
 ## Security & Configuration Tips
 Never log authentication tokens or session cookies. Maintain the streaming proxy path without inserting external scripts or blocking 401 passthrough behavior. Respect `proxy.sh` defaults (port 10000) and ensure authenticated Codex CLI requests succeed while unauthenticated ones return 401. Update `CLAUDE.md` and this guide if lifecycle or invariants change.
+
+## Tooling & CLI Access
+The GitHub CLI (`gh`) is installed and already authenticated as `jleechan2015`; prefer it for PR status, checks, and other GitHub interactions instead of manual API calls.

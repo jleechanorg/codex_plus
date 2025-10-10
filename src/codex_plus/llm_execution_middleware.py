@@ -58,6 +58,8 @@ class LLMExecutionMiddleware:
 
     # Class-level locks to prevent race conditions in session initialization
     _session_init_lock = __import__('threading').Lock()
+    _RETRY_DELAYS: Tuple[float, ...] = (0.5,)  # seconds
+    _MAX_STREAM_ERROR_MESSAGE = 240
 
     def __init__(self, upstream_url: Optional[str] = None, url_getter: Optional[callable] = None):
         """Initialize middleware with either static URL or dynamic URL getter
@@ -87,6 +89,7 @@ class LLMExecutionMiddleware:
         self.commands_dir = self.claude_dir / "commands" if self.claude_dir else None
         self.codexplus_dir = Path(".codexplus/commands")
         self.home_codexplus_dir = Path.home() / ".codexplus" / "commands"
+        self._retry_schedule = self._RETRY_DELAYS
 
     def _is_cerebras_upstream(self, url: str) -> bool:
         """Check if URL is Cerebras API endpoint"""
@@ -96,7 +99,7 @@ class LLMExecutionMiddleware:
             return False
 
         return parsed.hostname == "api.cerebras.ai"
-        
+
     def _find_claude_dir(self) -> Optional[Path]:
         """Find .claude directory in project hierarchy"""
         current = Path.cwd()
@@ -1137,7 +1140,7 @@ BEGIN EXECUTION NOW:
                 resp_headers["content-type"] = "text/event-stream; charset=utf-8"
 
             logger.info(f"📤 Forwarding headers: {list(resp_headers.keys())}")
-            
+
             # Store response reference for cleanup on middleware destruction
             if not hasattr(self, '_active_responses'):
                 self._active_responses = []
@@ -1177,6 +1180,25 @@ BEGIN EXECUTION NOW:
                 content={"error": f"Proxy failed: {str(e)}"},
                 status_code=500
             )
+
+    @classmethod
+    def _classify_stream_error(cls, exc: Exception) -> Tuple[str, str]:
+        """Classify upstream streaming errors for structured reporting."""
+        message = str(exc).strip() or exc.__class__.__name__
+        if len(message) > cls._MAX_STREAM_ERROR_MESSAGE:
+            message = message[: cls._MAX_STREAM_ERROR_MESSAGE - 3] + "..."
+        lower_msg = message.lower()
+        if "timeout" in lower_msg or "too slow" in lower_msg:
+            code = "UPSTREAM_TIMEOUT"
+        else:
+            code = "UPSTREAM_ERROR"
+        return code, message
+
+    @staticmethod
+    def _format_stream_error_event(code: str, message: str) -> bytes:
+        """Create an SSE payload describing a streaming error."""
+        payload = {"type": "error", "code": code, "message": message}
+        return f"data: {json.dumps(payload)}\n\n".encode("utf-8")
 
 
 def create_llm_execution_middleware(upstream_url: Optional[str] = None, url_getter: Optional[callable] = None):
