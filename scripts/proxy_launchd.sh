@@ -1,10 +1,9 @@
 #!/bin/bash
-# Launchd-friendly proxy runner that keeps the uvicorn process in the foreground
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENV_PATH="$SCRIPT_DIR/venv"
-DEFAULT_RUNTIME_DIR="${CODEX_PROXY_RUNTIME_DIR:-/tmp/codex_plus}"
+SCRIPT_DIR="/Users/jleechan/projects_other/codex_plus"
+VENV_PATH="/Users/jleechan/projects_other/codex_plus/venv"
+DEFAULT_RUNTIME_DIR="/tmp/codex_plus"
 
 mkdir -p "$DEFAULT_RUNTIME_DIR"
 if [ ! -f "$DEFAULT_RUNTIME_DIR/proxy.log" ]; then
@@ -39,30 +38,32 @@ if [ "$RUNTIME_DIR" != "$DEFAULT_RUNTIME_DIR" ]; then
 fi
 chmod 644 "$LOG_FILE" "$ERROR_LOG_FILE" 2>/dev/null || true
 
-if [ ! -d "$VENV_PATH" ]; then
-  echo "Virtualenv missing at $VENV_PATH" >&2
+if [ ! -d "/Users/jleechan/projects_other/codex_plus/venv" ]; then
+  echo "Virtualenv missing at /Users/jleechan/projects_other/codex_plus/venv" >&2
   exit 1
 fi
 
-cd "$SCRIPT_DIR"
+cd "/Users/jleechan/projects_other/codex_plus"
 # shellcheck disable=SC1091
-source "$VENV_PATH/bin/activate"
-EXTRA_PYTHONPATH="$SCRIPT_DIR/src"
+source "/Users/jleechan/projects_other/codex_plus/venv/bin/activate"
+EXTRA_PYTHONPATH="/Users/jleechan/projects_other/codex_plus/src"
 if [ -n "${PYTHONPATH:-}" ]; then
   export PYTHONPATH="$EXTRA_PYTHONPATH:${PYTHONPATH}"
 else
   export PYTHONPATH="$EXTRA_PYTHONPATH"
 fi
 
-echo $$ > "$PID_FILE"
+echo $$ > "/tmp/codex_plus/proxy_10000.pid"
 
 exec python -c "
 import sys, os
 try:
     from codex_plus.main_sync_cffi import app
     import uvicorn
-    uvicorn.run(app, host='127.0.0.1', port=10000, log_level='info')
+    # Use PROXY_PORT from environment, default to 10000
+    port = int(os.environ.get('PROXY_PORT', '10000'))
+    uvicorn.run(app, host='127.0.0.1', port=port, log_level='info')
 except Exception as e:
     print(f'STARTUP_ERROR: {e}', file=sys.stderr)
     sys.exit(1)
-" >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE"
+" >> "/tmp/codex_plus/proxy_10000.log" 2>> "/tmp/codex_plus/proxy.err"

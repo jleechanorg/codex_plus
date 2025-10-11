@@ -787,7 +787,9 @@ import sys, os
 try:
     from codex_plus.main_sync_cffi import app
     import uvicorn
-    uvicorn.run(app, host='127.0.0.1', port=10000, log_level='info')
+    # Use PROXY_PORT from environment, default to 10000
+    port = int(os.environ.get('PROXY_PORT', '10000'))
+    uvicorn.run(app, host='127.0.0.1', port=port, log_level='info')
 except Exception as e:
     print(f'STARTUP_ERROR: {e}', file=sys.stderr)
     sys.exit(1)
