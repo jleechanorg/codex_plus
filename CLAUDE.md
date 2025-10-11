@@ -73,6 +73,24 @@ Breaking these rules will immediately break ALL Codex functionality, blocking re
 
 **Current Implementation**: The proxy now includes integrated LLM execution middleware that instructs Claude to natively execute slash commands by reading command definition files from `.codexplus/commands/` or `.claude/commands/` directories.
 
+## 📁 Directory Structure Clarification
+
+**IMPORTANT**: There are TWO separate command systems:
+
+1. **`.codexplus/` - Codex-Plus Proxy Commands**
+   - This is SPECIFIC to this proxy project only
+   - NOT used by Claude Code CLI
+   - Used by the proxy's slash command middleware
+   - Examples: proxy-specific tools, testing commands
+
+2. **`.claude/` - Claude Code CLI Commands**
+   - This is the STANDARD directory for Claude Code CLI
+   - Used by official Claude Code CLI tool
+   - Compatible with Claude Code's native slash command system
+   - Examples: standard development commands, AI workflows
+
+**Search Order**: The proxy searches `.codexplus/commands/` first (proxy-specific), then `.claude/commands/` (CLI-compatible). This allows the proxy to have its own commands while remaining compatible with Claude Code CLI conventions.
+
 ## Development Commands
 
 ### Core Development
@@ -107,6 +125,11 @@ codex  # Now uses proxy
 # Or one-time usage
 OPENAI_BASE_URL=http://localhost:10000 codex
 ```
+
+### Cerebras Provider Setup
+- Run `./proxy.sh --cerebras` after exporting `CEREBRAS_API_KEY`, `CEREBRAS_BASE_URL`, and `CEREBRAS_MODEL`.
+- The script automatically sources `~/.bashrc` when those variables are absent, so store the real credentials there and never check them into the repo.
+- Set `PROXY_PORT` before launching if you need the Cerebras proxy listening on a different port than the default Codex proxy.
 
 ### Testing and Validation
 ```bash
@@ -218,17 +241,20 @@ codex_plus/
 │   ├── test_hooks_integration.py # Hook integration tests
 │   ├── test_copilot_command.py  # Copilot command tests
 │   └── claude/hooks/            # Hook-specific tests
-├── .codexplus/                  # Primary configuration
-│   ├── commands/                # Slash command definitions
+├── .codexplus/                  # Proxy-specific configuration (NOT Claude Code CLI)
+│   ├── commands/                # Proxy-specific slash commands
 │   │   ├── copilot.md           # Autonomous PR processing
 │   │   ├── echo.md              # Echo test command
 │   │   ├── hello.md             # Hello world command
 │   │   └── test-args.md         # Argument testing
-│   ├── hooks/                   # Hook implementations
+│   ├── hooks/                   # Proxy-specific hook implementations
 │   │   ├── add_context.py       # UserPromptSubmit hook example
 │   │   ├── post_add_header.py   # Post-output hook example
 │   │   └── shared_utils.py      # Hook utilities
-│   └── settings.json            # Project-level hook configuration
+│   └── settings.json            # Proxy-specific hook configuration
+├── .claude/                     # Claude Code CLI configuration (standard)
+│   ├── commands/                # Claude Code CLI slash commands
+│   └── settings.json            # Claude Code CLI settings
 ├── .github/workflows/           # CI/CD
 │   └── tests.yml                # GitHub Actions test workflow
 ├── scripts/                     # Development and deployment scripts
@@ -370,6 +396,36 @@ export NO_NETWORK=1                           # CI simulation mode
 4. **Security Review**: Ensure SSRF protection and input validation
 5. **Integration Testing**: Test with actual Codex CLI and slash commands
 6. **Documentation**: Update CLAUDE.md and architecture documentation
+
+## Cerebras Code Generation
+
+### Using /cereb Command
+
+The `/cereb` slash command uses Cerebras for rapid code generation. **IMPORTANT**: Always use the `--no-auto-context` flag to avoid context poisoning:
+
+```bash
+# ❌ WRONG - Context extraction includes CLAUDE.md rules
+cerebras_direct.sh "generate code"
+
+# ✅ CORRECT - Skip auto-context for code generation
+cerebras_direct.sh --no-auto-context "generate code"
+```
+
+**Why This Matters:**
+- The context extractor includes CLAUDE.md file creation rules
+- LLM responds to those rules instead of generating code
+- Results in rule violations and critiques instead of actual code
+- Using `--no-auto-context` bypasses this issue
+
+**Alternative Flags:**
+- `--light` - Fastest mode, no system prompts (use for simple tasks)
+- `--skip-codegen-sys-prompt` - Documentation-focused mode
+- `--context-file FILE` - Provide specific context file
+
+**When to Use Each Mode:**
+- `--no-auto-context` - Code generation tasks (default recommendation)
+- `--light` - Ultra-fast simple code snippets
+- Default (auto-context) - Documentation, analysis, planning
 
 ## Future Considerations
 
