@@ -104,7 +104,9 @@ class LLMExecutionMiddleware:
         search_roots = [self.codexplus_dir, self.home_codexplus_dir]
         if self.commands_dir:
             search_roots.append(self.commands_dir)
-        if self.home_claude_commands_dir and self.home_claude_commands_dir != self.commands_dir:
+        if self.home_claude_commands_dir and (
+            self.commands_dir is None or self.home_claude_commands_dir != self.commands_dir
+        ):
             search_roots.append(self.home_claude_commands_dir)
 
         for root in search_roots:

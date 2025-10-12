@@ -7,7 +7,7 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.sync_commands import sync_commands  # noqa: E402
+from scripts.sync_commands import sync_commands
 
 
 def test_sync_commands_copies_reviewdeep(tmp_path):
