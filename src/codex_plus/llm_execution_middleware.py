@@ -56,6 +56,7 @@ class LLMExecutionMiddleware:
         self.upstream_url = upstream_url
         self.claude_dir = self._find_claude_dir()
         self.commands_dir = self.claude_dir / "commands" if self.claude_dir else None
+        self.home_claude_commands_dir = Path.home() / ".claude" / "commands"
         self.codexplus_dir = Path(".codexplus/commands")
         self.home_codexplus_dir = Path.home() / ".codexplus" / "commands"
         self._retry_schedule = self._RETRY_DELAYS
@@ -68,12 +69,7 @@ class LLMExecutionMiddleware:
             if claude_dir.exists():
                 return claude_dir
             current = current.parent
-        
-        # Check in home directory as fallback
-        home_claude = Path.home() / ".claude"
-        if home_claude.exists():
-            return home_claude
-        
+
         return None
     
     def detect_slash_commands(self, text: str) -> List[Tuple[str, str]]:
@@ -104,10 +100,12 @@ class LLMExecutionMiddleware:
         return commands
     
     def find_command_file(self, command_name: str) -> Optional[Path]:
-        """Locate command definition with local .codexplus, home ~/.codexplus, then .claude."""
+        """Locate command definition with local .codexplus, home ~/.codexplus, project .claude, then ~/.claude."""
         search_roots = [self.codexplus_dir, self.home_codexplus_dir]
         if self.commands_dir:
             search_roots.append(self.commands_dir)
+        if self.home_claude_commands_dir and self.home_claude_commands_dir != self.commands_dir:
+            search_roots.append(self.home_claude_commands_dir)
 
         for root in search_roots:
             if not root or not root.exists():

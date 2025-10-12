@@ -88,6 +88,26 @@ def test_home_codexplus_used_when_local_missing(monkeypatch, tmp_path):
             current = current.parent
 
 
+def test_home_claude_used_when_no_project_directory(monkeypatch, tmp_path):
+    """Commands in ~/.claude/commands serve as a final fallback."""
+    fake_home = tmp_path / "home"
+    cmd_dir = fake_home / ".claude" / "commands"
+    created = write_cmd(cmd_dir, "globalcmd", description="From home .claude")
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    try:
+        mw = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
+        resolved = mw.find_command_file("globalcmd")
+        assert resolved is not None
+        assert str(cmd_dir) in str(resolved)
+    finally:
+        created.unlink(missing_ok=True)
+        current = cmd_dir
+        while current != fake_home and current.exists() and not any(current.iterdir()):
+            current.rmdir()
+            current = current.parent
+
+
 def test_local_codexplus_precedence_over_home(monkeypatch, tmp_path):
     """Local .codexplus/commands outranks ~/.codexplus/commands."""
     local_dir = Path(".codexplus/commands")

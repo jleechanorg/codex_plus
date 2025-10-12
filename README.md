@@ -46,7 +46,7 @@ Re-run `./install.sh` if you relocate the repo or switch shells, and double-chec
 - **Request logging:** `src/codex_plus/request_logger.py` captures structured payloads under `/tmp/codex_plus/<branch>/` for debugging and branch-specific auditing.
 - **Safety guardrails:** SSRF protection, header sanitization, and upstream validation run before forwarding to the ChatGPT backend.
 
-Explore `.codexplus/commands/` for ready-to-run slash commands like `/copilot`, `/echo`, `/hello`, and `/test-args`, and `.codexplus/hooks/` for Python hook samples with YAML/docstring metadata.
+Explore `.codexplus/commands/` for ready-to-run slash commands like `/copilot`, `/echo`, `/hello`, and `/test-args`, and `.codexplus/hooks/` for Python hook samples with YAML/docstring metadata. Running `./install.sh` now mirrors these commands into `~/.codexplus/commands/` and `~/.claude/commands/` so they remain available when you work inside other repositories (including `/reviewdeep`).
 
 ## Repository Tour
 

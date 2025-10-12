@@ -96,6 +96,17 @@ main() {
   rc_file="$(choose_shell_rc)"
   echo "Using shell configuration: $rc_file"
   append_snippet "$rc_file"
+
+  # Ensure users have slash command definitions available globally.
+  local python_cmd="python3"
+  if command -v "$python_cmd" >/dev/null 2>&1; then
+    if ! "$python_cmd" "${SCRIPT_DIR}/scripts/sync_commands.py" --include-defaults --quiet; then
+      echo "Warning: Failed to sync slash command files."
+    fi
+  else
+    echo "Warning: python3 not found; skipping slash command sync."
+  fi
+
   printf '\nNext steps:\n'
   echo "  1. source \"$rc_file\" (or restart your shell)."
   echo "  2. Run \"codex-plus-proxy enable\" to start the proxy (aliases to proxy.sh)."
