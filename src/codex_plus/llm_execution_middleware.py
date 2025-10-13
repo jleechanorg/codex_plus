@@ -268,10 +268,12 @@ BEGIN EXECUTION NOW:
                 # Add status line instruction directly to user message
                 if status_line_instruction:
                     for message in reversed(request_body["messages"]):
-                        if message.get("role") == "user":
-                            current_content = message.get("content", "")
-                            message["content"] = f"{status_line_instruction}\n\n{current_content}"
-                            break
+                        if message.get("role") != "user":
+                            continue
+
+                        current_content = message.get("content", "")
+                        message["content"] = f"{status_line_instruction}\n\n{current_content}"
+                        break
 
                 logger.info("💉 Injected status line and/or execution instruction as system message")
 
