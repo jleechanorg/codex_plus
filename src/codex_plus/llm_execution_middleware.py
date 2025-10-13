@@ -116,10 +116,14 @@ class LLMExecutionMiddleware:
     def find_command_file(self, command_name: str) -> Optional[Path]:
         """Locate command definition in local/home .codexplus then project/home .claude."""
         search_roots = [
-            self.codexplus_dir,
-            self.home_codexplus_dir,
-            self.project_commands_dir,
-            self.home_commands_dir,
+            root
+            for root in (
+                self.codexplus_dir,
+                self.home_codexplus_dir,
+                self.project_commands_dir,
+                self.home_commands_dir,
+            )
+            if root is not None
         ]
 
         for root in search_roots:
