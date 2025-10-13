@@ -113,3 +113,31 @@ def test_local_codexplus_precedence_over_home(monkeypatch, tmp_path):
         while current != fake_home and current.exists() and not any(current.iterdir()):
             current.rmdir()
             current = current.parent
+
+
+def test_home_claude_used_when_project_has_no_match(monkeypatch, tmp_path):
+    """Fallback to ~/.claude/commands when project .claude lacks command."""
+    project_claude = Path(".claude/commands")
+    project_claude.mkdir(parents=True, exist_ok=True)
+
+    fake_home = tmp_path / "home"
+    home_commands = fake_home / ".claude" / "commands"
+    home_file = write_cmd(home_commands, "fallback", description="Home claude cmd")
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    try:
+        mw = create_llm_execution_middleware("https://chatgpt.com/backend-api/codex")
+        resolved = mw.find_command_file("fallback")
+        assert resolved is not None
+        assert str(home_commands) in str(resolved)
+    finally:
+        home_file.unlink(missing_ok=True)
+        current = home_commands
+        while current != fake_home and current.exists() and not any(current.iterdir()):
+            current.rmdir()
+            current = current.parent
+        if project_claude.exists() and not any(project_claude.iterdir()):
+            project_claude.rmdir()
+            parent = project_claude.parent
+            if parent.exists() and not any(parent.iterdir()):
+                parent.rmdir()
