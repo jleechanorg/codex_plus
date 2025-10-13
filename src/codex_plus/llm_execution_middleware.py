@@ -54,26 +54,36 @@ class LLMExecutionMiddleware:
 
     def __init__(self, upstream_url: str):
         self.upstream_url = upstream_url
-        self.claude_dir = self._find_claude_dir()
-        self.commands_dir = self.claude_dir / "commands" if self.claude_dir else None
+        self.project_claude_dir = self._find_project_claude_dir()
+        self.project_commands_dir = (
+            self.project_claude_dir / "commands" if self.project_claude_dir else None
+        )
+        self.home_claude_dir = self._get_home_claude_dir()
+        self.home_commands_dir = (
+            self.home_claude_dir / "commands" if self.home_claude_dir else None
+        )
         self.codexplus_dir = Path(".codexplus/commands")
         self.home_codexplus_dir = Path.home() / ".codexplus" / "commands"
         self._retry_schedule = self._RETRY_DELAYS
-        
-    def _find_claude_dir(self) -> Optional[Path]:
-        """Find .claude directory in project hierarchy"""
+
+    def _find_project_claude_dir(self) -> Optional[Path]:
+        """Find project-local .claude directory in current hierarchy"""
         current = Path.cwd()
         while current != current.parent:
             claude_dir = current / ".claude"
             if claude_dir.exists():
                 return claude_dir
             current = current.parent
-        
+
+        return None
+
+    def _get_home_claude_dir(self) -> Optional[Path]:
+        """Return ~/.claude directory when it exists"""
         # Check in home directory as fallback
         home_claude = Path.home() / ".claude"
         if home_claude.exists():
             return home_claude
-        
+
         return None
     
     def detect_slash_commands(self, text: str) -> List[Tuple[str, str]]:
@@ -104,10 +114,17 @@ class LLMExecutionMiddleware:
         return commands
     
     def find_command_file(self, command_name: str) -> Optional[Path]:
-        """Locate command definition with local .codexplus, home ~/.codexplus, then .claude."""
-        search_roots = [self.codexplus_dir, self.home_codexplus_dir]
-        if self.commands_dir:
-            search_roots.append(self.commands_dir)
+        """Locate command definition in local/home .codexplus then project/home .claude."""
+        search_roots = [
+            root
+            for root in (
+                self.codexplus_dir,
+                self.home_codexplus_dir,
+                self.project_commands_dir,
+                self.home_commands_dir,
+            )
+            if root is not None
+        ]
 
         for root in search_roots:
             if not root or not root.exists():
