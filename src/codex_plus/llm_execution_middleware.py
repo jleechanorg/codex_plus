@@ -220,12 +220,13 @@ BEGIN EXECUTION NOW:
         
         # Handle standard format with messages field
         elif "messages" in request_body:
-            for message in request_body["messages"]:
+            for message in reversed(request_body["messages"]):
                 if message.get("role") == "user" and "content" in message:
                     text = message["content"]
                     detected = self.detect_slash_commands(text)
                     if detected:
                         commands.extend(detected)
+                    break
         
         # Build injection content
         injection_parts = []
@@ -266,11 +267,13 @@ BEGIN EXECUTION NOW:
 
                 # Add status line instruction directly to user message
                 if status_line_instruction:
-                    for message in request_body["messages"]:
-                        if message.get("role") == "user":
-                            current_content = message.get("content", "")
-                            message["content"] = f"{status_line_instruction}\n\n{current_content}"
-                            break
+                    for message in reversed(request_body["messages"]):
+                        if message.get("role") != "user":
+                            continue
+
+                        current_content = message.get("content", "")
+                        message["content"] = f"{status_line_instruction}\n\n{current_content}"
+                        break
 
                 logger.info("💉 Injected status line and/or execution instruction as system message")
 

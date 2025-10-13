@@ -6,6 +6,7 @@ Tests whether instructing the LLM to execute commands works better than expandin
 import pytest
 import json
 import copy
+from types import SimpleNamespace
 from codex_plus.llm_execution_middleware import LLMExecutionMiddleware
 
 
@@ -140,6 +141,37 @@ class TestLLMExecutionMiddleware:
         instruction_lower = instruction.lower()
         for phrase in required_phrases:
             assert phrase in instruction_lower, f"Instruction missing required phrase: '{phrase}'"
+
+    def test_status_line_only_applies_to_latest_user_command(self, middleware):
+        """Slash command detection should focus on the latest user message even with status line injection."""
+
+        middleware.current_request = SimpleNamespace(
+            state=SimpleNamespace(
+                status_line="[Dir: repo | Local: branch | Remote: origin/branch | PR: none]"
+            )
+        )
+
+        request_body = {
+            "messages": [
+                {"role": "system", "content": "system context"},
+                {"role": "user", "content": "/fixpr"},
+                {"role": "assistant", "content": "ack"},
+                {"role": "user", "content": "/redgreen"},
+            ]
+        }
+
+        modified = middleware.inject_execution_behavior(copy.deepcopy(request_body))
+
+        system_msg = modified["messages"][0]
+        assert system_msg["role"] == "system"
+        assert "/redgreen" in system_msg["content"]
+        assert "/fixpr" not in system_msg["content"]
+
+        user_messages = [msg for msg in modified["messages"] if msg.get("role") == "user"]
+        assert len(user_messages) == 2
+        assert user_messages[0]["content"] == "/fixpr"
+        assert user_messages[1]["content"].startswith("Display this status line first:")
+        assert "/redgreen" in user_messages[1]["content"]
 
 
 if __name__ == "__main__":
