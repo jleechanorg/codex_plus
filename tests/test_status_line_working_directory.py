@@ -236,10 +236,12 @@ class TestStatusLineInjection:
         modified_body = llm_middleware.inject_execution_behavior(request_body)
 
         # Assert
-        # Should contain status line instruction
+        # Should contain status line instruction appended after the user text
         input_text = modified_body["input"][0]["content"][0]["text"]
-        assert "Display this status line first:" in input_text
+        instruction_prefix = "Append this status line as the final line of your response:"
         assert "test_repo" in input_text
+        assert input_text.startswith("test command")
+        assert input_text.splitlines()[-1].startswith(instruction_prefix)
 
     def test_status_line_injection_into_standard_format(self, llm_middleware, mock_request_with_working_dir):
         """FAILING: Should inject status line into standard messages format"""
@@ -266,8 +268,10 @@ class TestStatusLineInjection:
                 break
 
         assert user_message is not None
-        assert "Display this status line first:" in user_message["content"]
+        instruction_prefix = "Append this status line as the final line of your response:"
         assert "test_repo" in user_message["content"]
+        assert user_message["content"].startswith("test message")
+        assert user_message["content"].splitlines()[-1].startswith(instruction_prefix)
 
 
 class TestGitHeaderScriptResolution:
