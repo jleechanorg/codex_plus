@@ -44,6 +44,9 @@ from .chat_colorizer import apply_claude_colors
 
 logger = logging.getLogger(__name__)
 
+STATUS_LINE_INSTRUCTION_PREFIX = "Append this status line as the final line of your response:"
+
+
 class LLMExecutionMiddleware:
     """Middleware that instructs LLM to execute slash commands like Claude Code CLI"""
 
@@ -59,6 +62,15 @@ class LLMExecutionMiddleware:
         self.codexplus_dir = Path(".codexplus/commands")
         self.home_codexplus_dir = Path.home() / ".codexplus" / "commands"
         self._retry_schedule = self._RETRY_DELAYS
+
+    @staticmethod
+    def _append_status_line(content: str, status_line_instruction: Optional[str]) -> str:
+        """Append the status line instruction to the provided content if present."""
+        if not status_line_instruction:
+            return content
+        if content:
+            return f"{content}\n\n{status_line_instruction}"
+        return status_line_instruction
         
     def _find_claude_dir(self) -> Optional[Path]:
         """Find .claude directory in project hierarchy"""
@@ -230,16 +242,11 @@ BEGIN EXECUTION NOW:
         # Build injection content
         injection_parts = []
 
-        # Shared prefix for status line instructions so we can detect it later
-        status_line_instruction_prefix = (
-            "Append this status line as the final line of your response:"
-        )
-
         # Add status line if available
         if status_line:
             # Guide Claude to render the status line at the end of its reply
             injection_parts.append(
-                f"{status_line_instruction_prefix} {status_line}"
+                f"{STATUS_LINE_INSTRUCTION_PREFIX} {status_line}"
             )
             logger.info(f"📌 Will inject status line: {status_line}")
 
@@ -256,7 +263,7 @@ BEGIN EXECUTION NOW:
             execution_instructions = []
 
             for part in injection_parts:
-                if part.startswith(status_line_instruction_prefix):
+                if part.startswith(STATUS_LINE_INSTRUCTION_PREFIX):
                     status_line_instruction = part
                 else:
                     execution_instructions.append(part)
@@ -276,12 +283,10 @@ BEGIN EXECUTION NOW:
                     for message in request_body["messages"]:
                         if message.get("role") == "user":
                             current_content = message.get("content", "")
-                            if current_content:
-                                message["content"] = (
-                                    f"{current_content}\n\n{status_line_instruction}"
-                                )
-                            else:
-                                message["content"] = status_line_instruction
+                            message["content"] = self._append_status_line(
+                                current_content,
+                                status_line_instruction,
+                            )
                             break
 
                 logger.info("💉 Injected status line and/or execution instruction as system message")
@@ -297,12 +302,10 @@ BEGIN EXECUTION NOW:
 
                                 # Add status line instruction directly as visible text
                                 if status_line_instruction:
-                                    if current_text:
-                                        current_text = (
-                                            f"{current_text}\n\n{status_line_instruction}"
-                                        )
-                                    else:
-                                        current_text = status_line_instruction
+                                    current_text = self._append_status_line(
+                                        current_text,
+                                        status_line_instruction,
+                                    )
 
                                 # Add execution instructions as system instruction
                                 if execution_instructions:

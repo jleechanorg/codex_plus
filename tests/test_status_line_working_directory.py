@@ -21,7 +21,10 @@ from fastapi.responses import JSONResponse
 
 from src.codex_plus.hooks import HookSystem
 from src.codex_plus.status_line_middleware import HookMiddleware
-from src.codex_plus.llm_execution_middleware import LLMExecutionMiddleware
+from src.codex_plus.llm_execution_middleware import (
+    LLMExecutionMiddleware,
+    STATUS_LINE_INSTRUCTION_PREFIX,
+)
 
 
 class TestSettingsFilePrecedence:
@@ -236,12 +239,13 @@ class TestStatusLineInjection:
         modified_body = llm_middleware.inject_execution_behavior(request_body)
 
         # Assert
-        # Should contain status line instruction appended after the user text
         input_text = modified_body["input"][0]["content"][0]["text"]
-        instruction_prefix = "Append this status line as the final line of your response:"
         assert "test_repo" in input_text
         assert input_text.startswith("test command")
-        assert input_text.splitlines()[-1].startswith(instruction_prefix)
+        assert (
+            input_text.splitlines()[-1]
+            == f"{STATUS_LINE_INSTRUCTION_PREFIX} {mock_request_with_working_dir.state.status_line}"
+        )
 
     def test_status_line_injection_into_standard_format(self, llm_middleware, mock_request_with_working_dir):
         """FAILING: Should inject status line into standard messages format"""
@@ -268,10 +272,12 @@ class TestStatusLineInjection:
                 break
 
         assert user_message is not None
-        instruction_prefix = "Append this status line as the final line of your response:"
         assert "test_repo" in user_message["content"]
         assert user_message["content"].startswith("test message")
-        assert user_message["content"].splitlines()[-1].startswith(instruction_prefix)
+        assert (
+            user_message["content"].splitlines()[-1]
+            == f"{STATUS_LINE_INSTRUCTION_PREFIX} {mock_request_with_working_dir.state.status_line}"
+        )
 
 
 class TestGitHeaderScriptResolution:
