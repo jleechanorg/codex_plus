@@ -240,7 +240,7 @@ echo -e "${GREEN}🔄 Starting integration process...${NC}"
 
 # Fetch latest changes from origin/main first to ensure accurate comparisons
 echo "📡 Fetching latest changes from origin/main..."
-err_file="$(mktemp -t integrate_fetch_err.XXXXXX)"
+err_file="$(mktemp)"
 if ! GIT_TERMINAL_PROMPT=0 git fetch --prune origin main 2>"$err_file"; then
     echo "❌ Error: Failed to fetch updates from origin/main."
     echo "   Possible causes: network issues, authentication problems, or repository unavailability."
